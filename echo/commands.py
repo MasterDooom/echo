@@ -10,7 +10,10 @@ class Command:
     query: str = ""
 
 
-_WAKE_RE = re.compile(r"\b(?:(?:hey|okay|ok)\s+)?echo\b", re.IGNORECASE)
+_WAKE_RE = re.compile(
+    r"\b(?:(?:hey|okay|ok)\s+)?(?:echo|ecco|aiko|ayko|eyko|ayco|eyco|(?:ay|ey)\s+ko)\b",
+    re.IGNORECASE,
+)
 _SPACE_RE = re.compile(r"\s+")
 
 

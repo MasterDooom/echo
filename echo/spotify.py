@@ -200,9 +200,22 @@ class SpotifyClient:
             if exc.code == 401 and retry:
                 self._refresh()
                 return self._request(method, path, params=params, body=body, retry=False)
-            detail = exc.read().decode("utf-8", errors="replace")[:250]
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
             if exc.code == 403:
-                raise SpotifyError("Spotify refused playback control. Check Premium access and the requested app permissions.") from exc
+                # Spotify's error body can distinguish Premium, scope, quota,
+                # and device restrictions. Preserve it instead of guessing.
+                try:
+                    payload = json.loads(detail)
+                    error_payload = payload.get("error", payload)
+                    message = str(error_payload.get("message", detail))
+                    reason = str(error_payload.get("reason", "")).strip()
+                except (TypeError, ValueError, AttributeError):
+                    message, reason = detail, ""
+                reason_text = f" [{reason}]" if reason else ""
+                raise SpotifyError(
+                    f"Spotify refused playback{reason_text}: {message}. "
+                    "Check the Premium account connected to Echo."
+                ) from exc
             if exc.code == 404:
                 raise SpotifyError("No controllable Spotify device found. Open Spotify on this PC and start a track once.") from exc
             if exc.code == 429:
@@ -229,14 +242,17 @@ class SpotifyClient:
         params = {"device_id": device_id} if device_id else None
         self._request("PUT", "/me/player/play", params=params)
 
-    def _device(self) -> dict[str, Any] | None:
+    def _device(self, preferred_id: str | None = None) -> dict[str, Any] | None:
         response = self._request("GET", "/me/player/devices")
         devices = [d for d in response.get("devices", []) if d.get("id") and not d.get("is_restricted")]
         if not devices:
             return None
-        computer = next((d for d in devices if str(d.get("type", "")).lower() == "computer"), None)
+        # Prefer the exact device paused at wake time, then the active device.
+        # Never select an inactive computer ahead of the active Spotify device.
+        preferred = next((d for d in devices if preferred_id and d.get("id") == preferred_id), None)
         active = next((d for d in devices if d.get("is_active")), None)
-        return computer or active or devices[0]
+        computer = next((d for d in devices if str(d.get("type", "")).lower() == "computer"), None)
+        return preferred or active or computer or devices[0]
 
     def search_track(self, query: str) -> dict[str, Any]:
         results = self._request("GET", "/search", params={"q": query, "type": "track", "limit": 5})
@@ -246,23 +262,25 @@ class SpotifyClient:
             raise SpotifyError(f"I couldn't find a Spotify track matching '{query}'.")
         return track
 
-    def _play_track(self, query: str) -> str:
+    def _play_track(self, query: str, device_id: str | None = None) -> str:
         track = self.search_track(query)
-        device = self._device()
-        params = {"device_id": device["id"]} if device else None
+        device = self._device(device_id) if not device_id else None
+        target_id = device_id or (device["id"] if device else None)
+        params = {"device_id": target_id} if target_id else None
         self._request("PUT", "/me/player/play", params=params, body={"uris": [track["uri"]]})
         artists = ", ".join(a.get("name", "") for a in track.get("artists", []))
         return f"Playing {track.get('name', 'track')} — {artists}".strip(" —")
 
-    def _playback_action(self, endpoint: str, method: str = "PUT") -> str:
-        device = self._device()
-        params = {"device_id": device["id"]} if device else None
+    def _playback_action(self, endpoint: str, method: str = "PUT", device_id: str | None = None) -> str:
+        device = self._device(device_id) if not device_id else None
+        target_id = device_id or (device["id"] if device else None)
+        params = {"device_id": target_id} if target_id else None
         self._request(method, endpoint, params=params)
         labels = {"/me/player/next": "Skipped to next track", "/me/player/previous": "Went to previous track", "/me/player/pause": "Paused", "/me/player/play": "Resumed playback"}
         return labels[endpoint]
 
-    def _volume(self, amount: str) -> str:
-        device = self._device()
+    def _volume(self, amount: str, device_id: str | None = None) -> str:
+        device = self._device(device_id)
         if not device:
             raise SpotifyError("Open Spotify on this PC and start a track once.")
         current = device.get("volume_percent")
@@ -274,20 +292,21 @@ class SpotifyClient:
             value = max(0, int(current) - 10)
         else:
             value = max(0, min(100, int(amount)))
-        self._request("PUT", "/me/player/volume", params={"volume_percent": value, "device_id": device["id"]})
+        target_id = device_id or device["id"]
+        self._request("PUT", "/me/player/volume", params={"volume_percent": value, "device_id": target_id})
         return f"Volume {value}%"
 
-    def execute(self, command: Command) -> str:
+    def execute(self, command: Command, *, device_id: str | None = None) -> str:
         if command.kind == "play":
-            return self._play_track(command.query)
+            return self._play_track(command.query, device_id=device_id)
         if command.kind == "next":
-            return self._playback_action("/me/player/next", "POST")
+            return self._playback_action("/me/player/next", "POST", device_id=device_id)
         if command.kind == "previous":
-            return self._playback_action("/me/player/previous", "POST")
+            return self._playback_action("/me/player/previous", "POST", device_id=device_id)
         if command.kind == "pause":
-            return self._playback_action("/me/player/pause")
+            return self._playback_action("/me/player/pause", device_id=device_id)
         if command.kind == "resume":
-            return self._playback_action("/me/player/play")
+            return self._playback_action("/me/player/play", device_id=device_id)
         if command.kind == "volume":
-            return self._volume(command.query)
+            return self._volume(command.query, device_id=device_id)
         raise SpotifyError("I don't know that command yet.")

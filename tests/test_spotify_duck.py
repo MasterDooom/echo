@@ -51,6 +51,38 @@ class SpotifyDuckTests(unittest.TestCase):
         client.resume_after_command({"was_playing": False, "device_id": "device-123"})
         client._request.assert_not_called()
 
+    def test_device_prefers_active_device_over_inactive_computer(self):
+        client = self.make_client()
+        client._request.return_value = {
+            "devices": [
+                {"id": "inactive-pc", "type": "Computer", "is_active": False, "is_restricted": False},
+                {"id": "active-phone", "type": "Smartphone", "is_active": True, "is_restricted": False},
+            ]
+        }
+
+        self.assertEqual(client._device()["id"], "active-phone")
+
+    def test_device_prefers_device_paused_at_wake_time(self):
+        client = self.make_client()
+        client._request.return_value = {
+            "devices": [
+                {"id": "active-pc", "type": "Computer", "is_active": True, "is_restricted": False},
+                {"id": "paused-device", "type": "Smartphone", "is_active": False, "is_restricted": False},
+            ]
+        }
+
+        self.assertEqual(client._device("paused-device")["id"], "paused-device")
+
+    def test_next_targets_the_device_that_was_paused(self):
+        client = self.make_client()
+        client._request.return_value = {}
+
+        client.execute(type("Command", (), {"kind": "next", "query": ""})(), device_id="device-123")
+
+        client._request.assert_called_once_with(
+            "POST", "/me/player/next", params={"device_id": "device-123"}
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

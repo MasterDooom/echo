@@ -21,7 +21,12 @@ log = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 160  # 10 ms for low-latency wake detection.
 PRE_ROLL_FRAMES = 24  # 240 ms to preserve the command onset after the wake word.
-WAKE_GRAMMAR = json.dumps(["echo", "hey echo", "[unk]"])
+# Vosk's English model can map "AY-koh" to several spellings. Keep the
+# grammar constrained to wake-name variants plus its unknown-word fallback.
+WAKE_GRAMMAR = json.dumps([
+    "echo", "ecco", "aiko", "ayko", "eyko", "ayco", "eyco",
+    "ay ko", "ey ko", "hey echo", "hey aiko", "[unk]"
+])
 
 COMMAND_WINDOW_SECONDS = 4.5
 MIN_CAPTURE_SECONDS = 0.8
@@ -87,7 +92,7 @@ class EchoAssistant(threading.Thread):
             command_recognizer = CommandRecognizer()
 
             self.emit("status", "listening")
-            self.emit("message", "Ready · Spotify pauses briefly while Echo listens")
+            self.emit("message", "Ready · say AY-koh, then your command")
 
             # Idle mode only recognizes the restricted wake grammar. It never
             # runs general transcription on the music or room audio.
@@ -110,8 +115,8 @@ class EchoAssistant(threading.Thread):
 
                 self.emit("status", "awake")
 
-                # Pause Spotify immediately after the wake word. This is more
-                # dependable than trying to cancel sung lyrics from the mic.
+                # Pause Spotify immediately after the wake word. This avoids
+                # song lyrics entering the command transcript.
                 playback_snapshot: dict[str, Any] = {"was_playing": False, "device_id": None}
                 try:
                     playback_snapshot = spotify.pause_for_command()
@@ -119,7 +124,7 @@ class EchoAssistant(threading.Thread):
                         self.emit("message", "Spotify paused · listening")
                 except Exception as exc:
                     log.warning("Could not pause Spotify before command capture: %s", exc)
-                    self.emit("message", "Spotify couldn't be paused; use headphones to avoid music bleed")
+                    self.emit("message", f"Spotify pause failed: {exc}")
 
                 frames = self._capture_command(list(history))
                 history.clear()
@@ -143,7 +148,7 @@ class EchoAssistant(threading.Thread):
                         # Playback was already paused before command capture.
                         self.emit("message", "Paused")
                     else:
-                        result = spotify.execute(command)
+                        result = spotify.execute(command, device_id=playback_snapshot.get("device_id"))
                         if command.kind in {"next", "previous", "volume"}:
                             self._restore_playback(spotify, playback_snapshot)
                         self.emit("message", result)
@@ -195,5 +200,5 @@ class EchoAssistant(threading.Thread):
                 return []
 
         # Whisper has its own VAD. The tiny pre-roll protects the first
-        # consonant if "Echo next" is spoken without a long pause.
+        # consonant if "AY-koh next" is spoken without a long pause.
         return frames if speech_started else []
