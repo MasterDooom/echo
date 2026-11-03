@@ -1,2 +1,3 @@
-Place your Picovoice custom Windows wake-word model here as echo_windows.ppn.
-Do not commit this file or your Picovoice access key.
+Echo now uses Vosk for local wake-word and command recognition.
+The speech model downloads automatically to %LOCALAPPDATA%\Echo\models.
+No Picovoice account, API key, or custom wake-word file is needed.

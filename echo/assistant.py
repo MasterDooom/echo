@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import re
 import threading
 import time
-from array import array
 from collections import deque
 
-import pvporcupine
 from vosk import KaldiRecognizer, Model
 
 from . import config
@@ -18,8 +17,12 @@ from .model import ensure_model
 from .spotify import SpotifyClient
 
 log = logging.getLogger(__name__)
-PRE_ROLL_FRAMES = 24  # about 770 ms; preserves words spoken directly after "Echo"
-COMMAND_WINDOW_SECONDS = 7.0
+SAMPLE_RATE = 16000
+FRAME_LENGTH = 800  # 50 ms frames for responsive local wake detection
+PRE_ROLL_FRAMES = 32  # 1.6 seconds; keeps words spoken directly after "Echo"
+COMMAND_WINDOW_SECONDS = 5.0
+WAKE_GRAMMAR = json.dumps(["echo", "hey echo", "[unk]"])
+WAKE_WORD_RE = re.compile(r"\\becho\\b", re.IGNORECASE)
 
 
 class EchoAssistant(threading.Thread):
@@ -50,24 +53,26 @@ class EchoAssistant(threading.Thread):
             self.paused.set()
             self.emit("status", "paused")
 
+    @staticmethod
+    def _wake_detected(recognizer: KaldiRecognizer, raw: bytes) -> bool:
+        if recognizer.AcceptWaveform(raw):
+            text = json.loads(recognizer.Result()).get("text", "")
+        else:
+            text = json.loads(recognizer.PartialResult()).get("partial", "")
+        return bool(WAKE_WORD_RE.search(text))
+
     def run(self) -> None:
-        porcupine = None
         try:
             self.emit("status", "loading")
-            access_key = config.picovoice_access_key()
-            keyword_file = config.keyword_path()
-            if not access_key:
-                raise RuntimeError("Add PICOVOICE_ACCESS_KEY to .env.")
-            if not keyword_file.is_file():
-                raise RuntimeError(f"Add your custom Echo wake-word file here: {keyword_file}")
-
             model_path = ensure_model(lambda message: self.emit("message", message))
             model = Model(str(model_path))
-            porcupine = pvporcupine.create(access_key=access_key, keyword_paths=[str(keyword_file)])
-            self.microphone = Microphone(porcupine.sample_rate, porcupine.frame_length)
+            wake = KaldiRecognizer(model, SAMPLE_RATE, WAKE_GRAMMAR)
+            wake.SetWords(False)
+
+            self.microphone = Microphone(SAMPLE_RATE, FRAME_LENGTH)
             self.microphone.start()
             spotify = SpotifyClient()
-            spotify._access_token()  # Fail early if the one-time Spotify login has not been done.
+            spotify._access_token()  # Fail early if Spotify has not been connected once.
             self.emit("status", "listening")
             self.emit("message", "Echo is ready")
 
@@ -76,29 +81,38 @@ class EchoAssistant(threading.Thread):
                 if self.paused.is_set():
                     time.sleep(0.12)
                     self.microphone.clear()
+                    history.clear()
+                    wake.Reset()
                     continue
+
                 raw = self.microphone.read()
                 if raw is None:
                     continue
                 history.append(raw)
-                pcm = array("h")
-                pcm.frombytes(raw)
-                if porcupine.process(pcm) >= 0:
-                    self.emit("status", "awake")
-                    command_text = self._capture_command(model, list(history))
-                    history.clear()
-                    if command_text:
-                        command = parse_command(command_text)
-                        if command is None:
-                            self.emit("message", "Didn't catch that command")
-                        else:
-                            self.emit("status", "working")
-                            try:
-                                self.emit("message", spotify.execute(command))
-                            except Exception as exc:
-                                log.exception("Command failed")
-                                self.emit("message", str(exc))
-                    self.emit("status", "listening")
+
+                if not self._wake_detected(wake, raw):
+                    continue
+
+                self.emit("status", "awake")
+                command_text = self._capture_command(model, list(history))
+                history.clear()
+                wake.Reset()
+
+                if command_text:
+                    command = parse_command(command_text)
+                    if command is None:
+                        self.emit("message", "Didn't catch that command")
+                    else:
+                        self.emit("status", "working")
+                        try:
+                            self.emit("message", spotify.execute(command))
+                        except Exception as exc:
+                            log.exception("Command failed")
+                            self.emit("message", str(exc))
+                else:
+                    self.emit("message", "Didn't catch that command")
+                self.emit("status", "listening")
+
         except Exception as exc:
             log.exception("Echo stopped")
             self.emit("status", "error")
@@ -109,37 +123,39 @@ class EchoAssistant(threading.Thread):
                     self.microphone.close()
                 except Exception:
                     log.exception("Could not close microphone")
-            if porcupine is not None:
-                porcupine.delete()
 
     def _capture_command(self, model: Model, pre_roll: list[bytes]) -> str:
+        """Reuse the wake-word audio, then transcribe only a short command window."""
         assert self.microphone is not None
-        recognizer = KaldiRecognizer(model, self.microphone.sample_rate)
+        recognizer = KaldiRecognizer(model, SAMPLE_RATE)
         recognizer.SetWords(False)
-        deadline = time.monotonic() + COMMAND_WINDOW_SECONDS
+        recognized: list[str] = []
 
-        def consume(raw: bytes) -> str:
-            if recognizer.AcceptWaveform(raw):
-                return json.loads(recognizer.Result()).get("text", "").strip()
-            return ""
+        def accept(raw: bytes) -> str:
+            if not recognizer.AcceptWaveform(raw):
+                return ""
+            text = json.loads(recognizer.Result()).get("text", "").strip()
+            if text:
+                recognized.append(text)
+            combined = " ".join(recognized).strip()
+            return combined if parse_command(combined) else ""
 
         for raw in pre_roll:
-            result = consume(raw)
+            result = accept(raw)
             if result:
-                command = parse_command(result)
-                if command:
-                    return result
-                recognizer.Reset()  # The wake word may have ended before the command began.
+                return result
 
+        deadline = time.monotonic() + COMMAND_WINDOW_SECONDS
         while not self.shutdown.is_set() and time.monotonic() < deadline:
             raw = self.microphone.read(timeout=0.2)
             if raw is None:
                 continue
-            result = consume(raw)
+            result = accept(raw)
             if result:
-                if parse_command(result):
-                    return result
-                recognizer.Reset()
+                return result
 
         final_text = json.loads(recognizer.FinalResult()).get("text", "").strip()
-        return final_text if parse_command(final_text) else ""
+        if final_text:
+            recognized.append(final_text)
+        combined = " ".join(recognized).strip()
+        return combined if parse_command(combined) else ""

@@ -29,22 +29,11 @@ def app_data_dir() -> Path:
 
 
 def model_dir() -> Path:
-    path = app_data_dir() / "models" / "vosk-model-small-en-us-0.15"
-    return path
-
-
-def keyword_path() -> Path:
-    configured = os.environ.get("ECHO_KEYWORD_PATH", "assets/echo_windows.ppn")
-    path = Path(configured)
-    return path if path.is_absolute() else ROOT / path
+    return app_data_dir() / "models" / "vosk-model-small-en-us-0.15"
 
 
 def spotify_client_id() -> str:
     return os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
-
-
-def picovoice_access_key() -> str:
-    return os.environ.get("PICOVOICE_ACCESS_KEY", "").strip()
 
 
 def spotify_redirect_uri() -> str:
