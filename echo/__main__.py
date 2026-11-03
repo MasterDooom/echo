@@ -13,7 +13,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Echo — a tiny voice controller for Spotify")
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--spotify-login", action="store_true", help="connect your Spotify account")
-    actions.add_argument("--download-model", action="store_true", help="download the offline speech model")
+    actions.add_argument("--download-model", action="store_true", help="download local speech models")
     args = parser.parse_args()
 
     try:
@@ -24,8 +24,12 @@ def main() -> int:
             return 0
         if args.download_model:
             from .model import ensure_model
+            from .stt import CommandRecognizer
 
-            print(f"Speech model ready: {ensure_model()}")
+            print(f"Wake-word model ready: {ensure_model()}")
+            print("Downloading/loading the local command-recognition model...")
+            CommandRecognizer().warm()
+            print("Command model ready. Both speech models are stored locally.")
             return 0
 
         from .assistant import EchoAssistant

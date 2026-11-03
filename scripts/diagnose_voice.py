@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,27 +17,34 @@ def main() -> int:
     load_env()
     path = model_dir()
     if not (path / "am").is_dir():
-        print(f"Vosk model not found: {path}")
+        print(f"Vosk wake model not found: {path}")
         return 1
 
-    print("Loading Vosk model...")
+    print("Loading local Vosk model...")
     model = Model(str(path))
-    microphone = Microphone(sample_rate=16000, frame_length=1600)
-    print(f"Using microphone device: {microphone.device}")
+    microphone = Microphone(sample_rate=16000, frame_length=160)
     recognizer = KaldiRecognizer(model, 16000)
     recognizer.SetWords(False)
-    last_partial = ""
 
     try:
         microphone.start()
-        print("\nSpeak naturally for 12 seconds. Try saying: 'Echo next'.\n")
-        import time
+        print(f"Microphone device: {microphone.device}")
+        if microphone.aec_enabled:
+            print(f"Speaker echo cancellation: ACTIVE ({microphone.loopback_name})")
+        else:
+            print(f"Speaker echo cancellation: OFF — {microphone.warning}")
 
-        deadline = time.monotonic() + 12
+        print("\nTest 1: keep Spotify playing and do not speak for 5 seconds.")
+        print("Echo should not transcribe the song lyrics.")
+        print("Test 2: say 'Echo next' a few times during the next 10 seconds.\n")
+
+        deadline = time.monotonic() + 15
+        last_partial = ""
         while time.monotonic() < deadline:
-            frame = microphone.read(timeout=0.5)
+            frame = microphone.read(timeout=0.25)
             if frame is None:
                 continue
+
             if recognizer.AcceptWaveform(frame):
                 text = json.loads(recognizer.Result()).get("text", "").strip()
                 if text:

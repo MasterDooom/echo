@@ -14,14 +14,20 @@ from .audio import Microphone
 from .commands import parse_command
 from .model import ensure_model
 from .spotify import SpotifyClient
+from .stt import CommandRecognizer
 from .wake import wake_word_detected
 
 log = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
-FRAME_LENGTH = 800  # 50 ms frames for responsive local wake detection
-PRE_ROLL_FRAMES = 32  # 1.6 seconds; keeps words spoken directly after "Echo"
-COMMAND_WINDOW_SECONDS = 5.0
+FRAME_LENGTH = 160  # WebRTC AEC works in 10 ms frames at 16 kHz.
+PRE_ROLL_FRAMES = 12  # 120 ms to preserve the command onset without replaying the wake.
 WAKE_GRAMMAR = json.dumps(["echo", "hey echo", "[unk]"])
+
+COMMAND_WINDOW_SECONDS = 4.5
+MIN_CAPTURE_SECONDS = 1.2
+NO_COMMAND_WAIT_SECONDS = 2.2
+VAD_THRESHOLD = 0.30
+END_SILENCE_FRAMES = 45  # 450 ms
 
 
 class EchoAssistant(threading.Thread):
@@ -64,17 +70,28 @@ class EchoAssistant(threading.Thread):
         try:
             self.emit("status", "loading")
             model_path = ensure_model(lambda message: self.emit("message", message))
-            model = Model(str(model_path))
-            wake = KaldiRecognizer(model, SAMPLE_RATE, WAKE_GRAMMAR)
+            wake_model = Model(str(model_path))
+            wake = KaldiRecognizer(wake_model, SAMPLE_RATE, WAKE_GRAMMAR)
             wake.SetWords(False)
 
             self.microphone = Microphone(SAMPLE_RATE, FRAME_LENGTH)
             self.microphone.start()
             spotify = SpotifyClient()
-            spotify._access_token()  # Fail early if Spotify has not been connected once.
-            self.emit("status", "listening")
-            self.emit("message", "Echo is ready")
+            spotify._access_token()  # Fail early if the one-time Spotify login has not been done.
+            command_recognizer = CommandRecognizer()
 
+            warning_sent = False
+            if self.microphone.warning:
+                self.emit("message", self.microphone.warning)
+                warning_sent = True
+            self.emit("status", "listening")
+            if self.microphone.aec_enabled:
+                self.emit("message", f"Ready · echo cancellation active ({self.microphone.loopback_name})")
+            else:
+                self.emit("message", "Ready · use headphones to prevent music bleed")
+
+            # Only the restricted wake grammar runs while idle. The command
+            # recognizer is invoked only after the wake word has been detected.
             history: deque[bytes] = deque(maxlen=PRE_ROLL_FRAMES)
             while not self.shutdown.is_set():
                 if self.paused.is_set():
@@ -89,27 +106,35 @@ class EchoAssistant(threading.Thread):
                     continue
                 history.append(raw)
 
+                if self.microphone.warning and not warning_sent:
+                    self.emit("message", self.microphone.warning)
+                    warning_sent = True
+
                 if not self._wake_detected(wake, raw):
                     continue
 
                 self.emit("status", "awake")
-                command_text = self._capture_command(model, list(history))
+                frames = self._capture_command(list(history))
                 history.clear()
                 wake.Reset()
 
-                if command_text:
-                    command = parse_command(command_text)
+                if not frames:
+                    self.emit("message", "Wake heard · waiting for a command timed out")
+                    self.emit("status", "listening")
+                    continue
+
+                self.emit("status", "working")
+                try:
+                    transcript = command_recognizer.transcribe_frames(frames)
+                    command = parse_command(transcript)
                     if command is None:
-                        self.emit("message", "Didn't catch that command")
+                        self.emit("message", f"Didn't catch that · {transcript[:48]}" if transcript else "Didn't catch that")
                     else:
-                        self.emit("status", "working")
-                        try:
-                            self.emit("message", spotify.execute(command))
-                        except Exception as exc:
-                            log.exception("Command failed")
-                            self.emit("message", str(exc))
-                else:
-                    self.emit("message", "Didn't catch that command")
+                        self.emit("message", spotify.execute(command))
+                except Exception as exc:
+                    log.exception("Command failed")
+                    self.emit("message", str(exc))
+
                 self.emit("status", "listening")
 
         except Exception as exc:
@@ -123,38 +148,33 @@ class EchoAssistant(threading.Thread):
                 except Exception:
                     log.exception("Could not close microphone")
 
-    def _capture_command(self, model: Model, pre_roll: list[bytes]) -> str:
-        """Reuse the wake-word audio, then transcribe only a short command window."""
+    def _capture_command(self, pre_roll: list[bytes]) -> list[bytes]:
+        """Capture one fresh utterance after wake, with a 120 ms onset buffer."""
         assert self.microphone is not None
-        recognizer = KaldiRecognizer(model, SAMPLE_RATE)
-        recognizer.SetWords(False)
-        recognized: list[str] = []
+        frames = list(pre_roll)
+        speech_started = False
+        trailing_silence = 0
+        started_at = time.monotonic()
+        deadline = started_at + COMMAND_WINDOW_SECONDS
 
-        def accept(raw: bytes) -> str:
-            if not recognizer.AcceptWaveform(raw):
-                return ""
-            text = json.loads(recognizer.Result()).get("text", "").strip()
-            if text:
-                recognized.append(text)
-            combined = " ".join(recognized).strip()
-            return combined if parse_command(combined) else ""
-
-        for raw in pre_roll:
-            result = accept(raw)
-            if result:
-                return result
-
-        deadline = time.monotonic() + COMMAND_WINDOW_SECONDS
         while not self.shutdown.is_set() and time.monotonic() < deadline:
-            raw = self.microphone.read(timeout=0.2)
+            raw = self.microphone.read(timeout=0.15)
             if raw is None:
                 continue
-            result = accept(raw)
-            if result:
-                return result
+            frames.append(raw)
 
-        final_text = json.loads(recognizer.FinalResult()).get("text", "").strip()
-        if final_text:
-            recognized.append(final_text)
-        combined = " ".join(recognized).strip()
-        return combined if parse_command(combined) else ""
+            probability = self.microphone.speech_probability
+            if probability >= VAD_THRESHOLD:
+                speech_started = True
+                trailing_silence = 0
+            elif speech_started:
+                trailing_silence += 1
+
+            elapsed = time.monotonic() - started_at
+            if speech_started and elapsed >= MIN_CAPTURE_SECONDS and trailing_silence >= END_SILENCE_FRAMES:
+                break
+            if not speech_started and elapsed >= NO_COMMAND_WAIT_SECONDS:
+                return []
+
+        # Whisper's own VAD trims the wake-word tail and any short silence.
+        return frames if speech_started else []
