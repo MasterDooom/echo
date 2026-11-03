@@ -209,7 +209,7 @@ class SpotifyFeatureTests(unittest.TestCase):
         response.__enter__.return_value = response
 
         with patch("echo.spotify.urlopen", return_value=response):
-            result = client._request("PUT", "/me/player/next")
+            result = SpotifyClient._request(client, "PUT", "/me/player/next")
 
         self.assertEqual(result, {})
 
@@ -225,7 +225,7 @@ class SpotifyFeatureTests(unittest.TestCase):
 
         with patch("echo.spotify.urlopen", return_value=response):
             with self.assertRaisesRegex(SpotifyError, "invalid response"):
-                client._request("GET", "/me/player")
+                SpotifyClient._request(client, "GET", "/me/player")
 
     def test_ranker_prefers_original_when_no_version_requested(self):
         tracks = [

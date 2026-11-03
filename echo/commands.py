@@ -172,7 +172,7 @@ def parse_command(transcript: str) -> Command | None:
     # control-intent check, so song titles ending in "please" are untouched.
     transport_text = re.sub(r"\s+(?:please|thanks|thank you)$", "", text).strip()
     if transport_text in {
-        "next", "next song", "next track", "skip", "skip song", "skip this song",
+        "next", "next song", "next track", "skip", "skip song", "skip the song", "skip this song",
         "skip this track", "go next", "go to next", "go to the next song",
         "go to the next track", "play next", "play the next", "play next song",
         "play the next song", "play next track", "play the next track",
