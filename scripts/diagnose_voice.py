@@ -13,7 +13,10 @@ from echo.config import load_env, model_dir
 from echo.wake import wake_word_detected
 from vosk import KaldiRecognizer, Model
 
-WAKE_GRAMMAR = json.dumps(["echo", "hey echo", "[unk]"])
+WAKE_GRAMMAR = json.dumps([
+    "echo", "ecco", "aiko", "ayko", "eyko", "ayco", "eyco",
+    "ay ko", "ey ko", "ay-ko", "ey-ko", "hey echo", "hey aiko", "[unk]"
+])
 
 
 def main() -> int:
@@ -33,7 +36,7 @@ def main() -> int:
         microphone.start()
         print(f"Microphone device: {microphone.device}")
         print("\nLeave Spotify playing. Stay silent for 5 seconds.")
-        print("Then say 'Echo' or 'Echo next'.")
+        print("Then say 'AY-koh' or 'AY-koh next'.")
         print("This diagnostic never prints general speech or song lyrics.\n")
 
         deadline = time.monotonic() + 15
@@ -55,7 +58,11 @@ def main() -> int:
             if wake_word_detected(text) and now - last_detection > 1.5:
                 detections += 1
                 last_detection = now
-                phase = "during Spotify playback" if now < silent_phase_end else "after your voice command"
+                phase = (
+                    "during Spotify playback"
+                    if now < silent_phase_end
+                    else "after your voice command"
+                )
                 print(f"WAKE DETECTED ({phase})")
                 recognizer.Reset()
 

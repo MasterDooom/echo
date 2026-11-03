@@ -19,20 +19,18 @@ from .wake import wake_word_detected
 
 log = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
-FRAME_LENGTH = 160  # 10 ms for low-latency wake detection.
-PRE_ROLL_FRAMES = 24  # 240 ms to preserve the command onset after the wake word.
-# Vosk's English model can map "AY-koh" to several spellings. Keep the
-# grammar constrained to wake-name variants plus its unknown-word fallback.
+FRAME_LENGTH = 160
+PRE_ROLL_FRAMES = 24
 WAKE_GRAMMAR = json.dumps([
     "echo", "ecco", "aiko", "ayko", "eyko", "ayco", "eyco",
-    "ay ko", "ey ko", "hey echo", "hey aiko", "[unk]"
+    "ay ko", "ey ko", "ay-ko", "ey-ko", "hey echo", "hey aiko", "[unk]"
 ])
 
 COMMAND_WINDOW_SECONDS = 4.5
 MIN_CAPTURE_SECONDS = 0.8
 NO_COMMAND_WAIT_SECONDS = 2.2
 VAD_THRESHOLD = 0.30
-END_SILENCE_FRAMES = 45  # 450 ms
+END_SILENCE_FRAMES = 45
 
 
 class EchoAssistant(threading.Thread):
@@ -40,6 +38,7 @@ class EchoAssistant(threading.Thread):
         super().__init__(name="EchoAssistant", daemon=daemon)
         self.events = events
         self.shutdown = threading.Event()
+        # Privacy mode closes the PortAudio input stream and releases the device.
         self.paused = threading.Event()
         self.microphone: Microphone | None = None
 
@@ -56,12 +55,11 @@ class EchoAssistant(threading.Thread):
             return
         if self.paused.is_set():
             self.paused.clear()
-            if self.microphone:
-                self.microphone.clear()
-            self.emit("status", "listening")
+            self.emit("message", "Privacy mode off · reopening microphone")
         else:
             self.paused.set()
-            self.emit("status", "paused")
+            self.emit("status", "privacy")
+            self.emit("message", "Privacy mode on · releasing microphone")
 
     @staticmethod
     def _wake_detected(recognizer: KaldiRecognizer, raw: bytes) -> bool:
@@ -76,6 +74,19 @@ class EchoAssistant(threading.Thread):
             spotify.resume_after_command(snapshot)
         except Exception:
             log.exception("Could not restore Spotify after listening")
+            self.emit("message", "Command finished, but Spotify could not resume. Check Spotify playback.")
+
+    def _open_microphone(self) -> Microphone:
+        microphone = Microphone(SAMPLE_RATE, FRAME_LENGTH)
+        microphone.start()
+        return microphone
+
+    def _release_microphone(self) -> None:
+        """Close and forget the input stream so Windows releases the device."""
+        microphone = self.microphone
+        self.microphone = None
+        if microphone is not None:
+            microphone.close()
 
     def run(self) -> None:
         try:
@@ -85,27 +96,37 @@ class EchoAssistant(threading.Thread):
             wake = KaldiRecognizer(wake_model, SAMPLE_RATE, WAKE_GRAMMAR)
             wake.SetWords(False)
 
-            self.microphone = Microphone(SAMPLE_RATE, FRAME_LENGTH)
-            self.microphone.start()
             spotify = SpotifyClient()
-            spotify._access_token()  # Fail early if the one-time Spotify login has not been done.
-            command_recognizer = CommandRecognizer()
+            spotify._access_token()
+            spotify.require_scopes()
 
+            command_recognizer = CommandRecognizer()
+            self.microphone = self._open_microphone()
             self.emit("status", "listening")
             self.emit("message", "Ready · say AY-koh, then your command")
 
-            # Idle mode only recognizes the restricted wake grammar. It never
-            # runs general transcription on the music or room audio.
             history: deque[bytes] = deque(maxlen=PRE_ROLL_FRAMES)
             while not self.shutdown.is_set():
                 if self.paused.is_set():
-                    time.sleep(0.12)
-                    self.microphone.clear()
+                    self._release_microphone()
                     history.clear()
                     wake.Reset()
+                    self.emit("status", "privacy")
+                    while self.paused.is_set() and not self.shutdown.is_set():
+                        time.sleep(0.10)
+                    if self.shutdown.is_set():
+                        break
+                    self.microphone = self._open_microphone()
+                    history.clear()
+                    wake.Reset()
+                    self.emit("status", "listening")
+                    self.emit("message", "Microphone active · local wake detection")
                     continue
 
-                raw = self.microphone.read()
+                if self.microphone is None:
+                    self.microphone = self._open_microphone()
+
+                raw = self.microphone.read(timeout=0.20)
                 if raw is None:
                     continue
                 history.append(raw)
@@ -114,10 +135,10 @@ class EchoAssistant(threading.Thread):
                     continue
 
                 self.emit("status", "awake")
-
-                # Pause Spotify immediately after the wake word. This avoids
-                # song lyrics entering the command transcript.
-                playback_snapshot: dict[str, Any] = {"was_playing": False, "device_id": None}
+                playback_snapshot: dict[str, Any] = {
+                    "was_playing": False,
+                    "device_id": None,
+                }
                 try:
                     playback_snapshot = spotify.pause_for_command()
                     if playback_snapshot.get("was_playing"):
@@ -132,6 +153,8 @@ class EchoAssistant(threading.Thread):
 
                 if not frames:
                     self._restore_playback(spotify, playback_snapshot)
+                    if self.paused.is_set():
+                        continue
                     self.emit("message", "Wake heard · no command detected")
                     self.emit("status", "listening")
                     continue
@@ -145,34 +168,36 @@ class EchoAssistant(threading.Thread):
                         self.emit("message", f"Didn't catch that · {transcript[:48]}" if transcript else "Didn't catch that")
                         self._restore_playback(spotify, playback_snapshot)
                     elif command.kind == "pause":
-                        # Playback was already paused before command capture.
                         self.emit("message", "Paused")
                     else:
-                        result = spotify.execute(command, device_id=playback_snapshot.get("device_id"))
-                        if command.kind in {"next", "previous", "volume"}:
-                            self._restore_playback(spotify, playback_snapshot)
+                        result = spotify.execute(
+                            command,
+                            device_id=playback_snapshot.get("device_id"),
+                        )
                         self.emit("message", result)
+                        if command.kind not in {"play", "resume"}:
+                            self._restore_playback(spotify, playback_snapshot)
                 except Exception as exc:
                     log.exception("Command failed")
                     if command is None or command.kind != "pause":
                         self._restore_playback(spotify, playback_snapshot)
                     self.emit("message", str(exc))
 
-                self.emit("status", "listening")
+                if not self.paused.is_set():
+                    self.emit("status", "listening")
 
         except Exception as exc:
             log.exception("Echo stopped")
             self.emit("status", "error")
             self.emit("message", str(exc))
         finally:
-            if self.microphone:
-                try:
-                    self.microphone.close()
-                except Exception:
-                    log.exception("Could not close microphone")
+            try:
+                self._release_microphone()
+            except Exception:
+                log.exception("Could not close microphone")
 
     def _capture_command(self, pre_roll: list[bytes]) -> list[bytes]:
-        """Capture only the short utterance after Spotify has been paused."""
+        """Capture a short command after Spotify has been paused."""
         assert self.microphone is not None
         frames = list(pre_roll)
         speech_started = False
@@ -180,7 +205,11 @@ class EchoAssistant(threading.Thread):
         started_at = time.monotonic()
         deadline = started_at + COMMAND_WINDOW_SECONDS
 
-        while not self.shutdown.is_set() and time.monotonic() < deadline:
+        while (
+            not self.shutdown.is_set()
+            and not self.paused.is_set()
+            and time.monotonic() < deadline
+        ):
             raw = self.microphone.read(timeout=0.15)
             if raw is None:
                 continue
@@ -194,11 +223,13 @@ class EchoAssistant(threading.Thread):
                 trailing_silence += 1
 
             elapsed = time.monotonic() - started_at
-            if speech_started and elapsed >= MIN_CAPTURE_SECONDS and trailing_silence >= END_SILENCE_FRAMES:
+            if (
+                speech_started
+                and elapsed >= MIN_CAPTURE_SECONDS
+                and trailing_silence >= END_SILENCE_FRAMES
+            ):
                 break
             if not speech_started and elapsed >= NO_COMMAND_WAIT_SECONDS:
                 return []
 
-        # Whisper has its own VAD. The tiny pre-roll protects the first
-        # consonant if "AY-koh next" is spoken without a long pause.
-        return frames if speech_started else []
+        return frames if speech_started and not self.paused.is_set() else []

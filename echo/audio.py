@@ -95,8 +95,12 @@ class Microphone:
             dtype="int16",
             callback=callback,
         )
-        self.stream.start()
-        self.clear()
+        try:
+            self.stream.start()
+            self.clear()
+        except Exception:
+            self.close()
+            raise
 
     def read(self, timeout: float = 0.25) -> bytes | None:
         try:
@@ -119,9 +123,23 @@ class Microphone:
                 return
 
     def close(self) -> None:
-        if self.stream is not None:
-            try:
-                self.stream.stop()
-                self.stream.close()
-            finally:
-                self.stream = None
+        stream = self.stream
+        self.stream = None
+        if stream is None:
+            return
+
+        first_error: Exception | None = None
+        try:
+            stream.stop()
+        except Exception as exc:
+            first_error = exc
+            log.warning("Microphone stop failed; still attempting to close the device: %s", exc)
+
+        try:
+            stream.close()
+        except Exception as exc:
+            first_error = first_error or exc
+            log.exception("Microphone close failed")
+
+        if first_error is not None:
+            raise first_error

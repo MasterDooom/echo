@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "echo-desktop-assistant"
-version = "0.2.1"
+version = "0.3.0"
 description = "A lightweight, local-first Windows voice controller for Spotify"
 requires-python = ">=3.10"
 dependencies = [

@@ -10,10 +10,13 @@ from . import config
 
 def main() -> int:
     config.load_env()
-    parser = argparse.ArgumentParser(description="Echo — a tiny voice controller for Spotify")
+    parser = argparse.ArgumentParser(
+        description="Echo — a lightweight local voice controller for Spotify"
+    )
     actions = parser.add_mutually_exclusive_group()
-    actions.add_argument("--spotify-login", action="store_true", help="connect your Spotify account")
+    actions.add_argument("--spotify-login", action="store_true", help="connect or update Spotify permissions")
     actions.add_argument("--download-model", action="store_true", help="download local speech models")
+    actions.add_argument("--refresh-playlists", action="store_true", help="refresh the local Spotify playlist cache")
     args = parser.parse_args()
 
     try:
@@ -22,6 +25,7 @@ def main() -> int:
 
             SpotifyClient.login()
             return 0
+
         if args.download_model:
             from .model import ensure_model
             from .stt import CommandRecognizer
@@ -30,6 +34,18 @@ def main() -> int:
             print("Downloading/loading the local command-recognition model...")
             CommandRecognizer().warm()
             print("Command model ready. Both speech models are stored locally.")
+            return 0
+
+        if args.refresh_playlists:
+            from .spotify import SpotifyClient
+
+            spotify = SpotifyClient()
+            spotify._access_token()
+            spotify.require_scopes()
+            playlists = spotify.list_playlists(refresh=True)
+            print(f"Cached {len(playlists)} Spotify playlists:")
+            for playlist in playlists:
+                print(f"  - {playlist.get('name', 'Untitled')}")
             return 0
 
         from .assistant import EchoAssistant

@@ -18,6 +18,8 @@ class WakeWordTests(unittest.TestCase):
             "eyco",
             "ay ko",
             "ey ko",
+            "ay-ko",
+            "ey-ko",
             "hey aiko",
         ):
             with self.subTest(transcript=transcript):

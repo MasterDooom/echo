@@ -1,16 +1,24 @@
 # Echo
 
-A lightweight Windows background voice controller for Spotify.
+A lightweight, local-first Windows voice controller for Spotify.
 
-- Say **"Echo next"**, **"Echo pause"**, **"Echo resume"**, or **"Echo play [song] by [artist]"**.
-- Vosk runs a restricted wake-word grammar while idle. Local Whisper `base.en` transcribes only the short command after wake-up.
-- WebRTC noise suppression and voice activity detection clean the microphone signal.
-- As soon as Echo hears the wake word, it briefly pauses Spotify before capturing the command. This prevents Spotify lyrics from being interpreted as commands. For next/previous/volume commands, playback resumes afterward if it was playing before. "Pause" remains paused; "play" and "resume" start playback normally.
-- No Picovoice account, cloud speech recognition, LLM, or browser UI is needed. Speech processing stays on the PC; only Spotify API requests go online.
+Echo is designed to stay in the background as a small orb near the taskbar. Say the wake name (pronounced **AY-koh**) followed by a command.
 
-## Setup (Windows 10/11)
+## What it does
 
-Python 3.14 (64-bit) is supported. From the project root:
+- Vosk runs a constrained wake-word grammar locally while idle.
+- faster-whisper base.en transcribes only the short command after wake-up.
+- A deterministic local intent parser distinguishes playback actions, track requests, playlist requests and queue requests.
+- Spotify search resolves tracks using title, artist and version metadata.
+- Your Spotify playlists are fetched, paginated and cached locally for name matching.
+- Spotify playback commands use the official Web API and keep targeting the device that was active when Echo woke.
+- The microphone stays on-device. No speech audio is uploaded or saved to disk.
+
+## Setup
+
+Windows 10/11 and Python 3.14 (64-bit) are supported.
+
+Run these commands from the repository root:
 
 ~~~powershell
 py -3.14 -m venv .venv
@@ -20,44 +28,44 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ~~~
 
-The setup installs:
-
-- **Vosk** for lightweight local wake-word detection.
-- **faster-whisper** with the `base.en` model for more accurate command transcription.
-- **WebRTC audio processing** for local noise suppression and voice activity detection.
-
-Download the local speech models:
-
-~~~powershell
-python -m echo --download-model
-~~~
-
-The Vosk wake model is about 40 MB. Whisper `base.en` is a separate model download (roughly 150 MB). Both are cached under `%LOCALAPPDATA%\Echo\models`.
-
-## Microphone and music handling
-
-Echo uses your selected Windows microphone. Set a specific device in `.env` when needed:
+Add your Spotify Developer App Client ID to .env:
 
 ~~~env
-ECHO_INPUT_DEVICE=1
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
 ~~~
 
-Echo does **not** continuously transcribe background audio. While idle, Vosk uses a restricted wake-word grammar. When it detects "Echo", Echo pauses Spotify, listens for one short command (up to 4.5 seconds), then restores playback when appropriate. This avoids trying to separate sung lyrics from your voice using a fragile loopback stream.
+In the Spotify Developer Dashboard, add the redirect URI exactly as shown above.
 
-The brief Spotify pause is intentional. It applies to Spotify playback only. Audio from other apps can still reach the microphone; use headphones if other apps are playing speech or music.
+## Spotify permissions
 
-## Connect Spotify
+Echo uses Authorization Code with PKCE; no Spotify Client Secret is needed.
 
-1. Create a personal app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/).
-2. Add this Redirect URI exactly: `http://127.0.0.1:8888/callback`.
-3. Copy the app's **Client ID** into `SPOTIFY_CLIENT_ID` in your local `.env`.
-4. Run the one-time login:
+The current permission set includes:
+
+- user-modify-playback-state
+- user-read-playback-state
+- user-read-currently-playing
+- playlist-read-private
+- playlist-read-collaborative
+
+Run the login command after setup, or whenever Echo reports that permissions need updating:
 
 ~~~powershell
 python -m echo --spotify-login
 ~~~
 
-Echo uses Authorization Code with PKCE, so it does not need a Spotify client secret. Spotify playback control requires Premium and an available Spotify Connect device.
+This opens Spotify's consent screen. Re-login is required because the older token may not include playlist and queue-reading permissions. The local playlist cache is cleared after re-login so it cannot carry over from a different account.
+
+Spotify playback control and queue insertion require Premium and an available Spotify Connect device. Spotify Development Mode apps also require the app owner to have Premium.
+
+## Download speech models
+
+~~~powershell
+python -m echo --download-model
+~~~
+
+The Vosk wake-word model and Whisper base.en model are downloaded once and stored under %LOCALAPPDATA%\Echo\models. Speech recognition runs locally after the downloads complete.
 
 ## Start Echo
 
@@ -65,51 +73,123 @@ Echo uses Authorization Code with PKCE, so it does not need a Spotify client sec
 python -m echo
 ~~~
 
-To start Echo without a console window, double-click `scripts\start_echo.vbs`. To launch it automatically when you sign in, run this once in PowerShell:
+The orb has three important states:
+
+- **Listening:** the microphone is active and local wake-word detection is running.
+- **Working:** Echo is processing a command.
+- **Microphone off:** privacy mode has stopped and closed the microphone input stream.
+
+Click the orb to expand it. Click the right-side ON/OFF control to toggle privacy mode. Right-click the orb for the same privacy action or to quit Echo.
+
+To refresh your Spotify playlist cache manually:
 
 ~~~powershell
-.\scripts\install_startup.ps1
+python -m echo --refresh-playlists
 ~~~
 
-## Commands
+To start Echo without a console window, double-click scripts\start_echo.vbs. To add it to Windows startup, run scripts\install_startup.ps1 once in PowerShell.
+
+## Voice commands
+
+### Playback
 
 | Say | Action |
 |---|---|
-| Echo next / Echo skip | Next track |
-| Echo previous / Echo back | Previous track |
+| Echo next / Echo skip / Echo play the next | Next track |
+| Echo previous / Echo go back | Previous track |
 | Echo pause | Pause playback |
 | Echo resume | Resume playback |
-| Echo play [song] by [artist] | Search and play a track |
+| Echo play Blinding Lights by The Weeknd | Search and play a track |
+| Echo play The Next Episode by Dr. Dre | Search and play the named track |
+
+### Queue
+
+| Say | Action |
+|---|---|
+| Echo queue Starboy | Add the track to the playback queue |
+| Echo add Starboy to my queue | Add the track to the playback queue |
+| Echo what's next | Show the upcoming queue |
+| Echo what's in my queue | Show the upcoming queue |
+
+Queue insertion is separate from editing a playlist. Spotify's Web API supports adding a track to the current playback queue and reading the queue; it does not expose queue removal or arbitrary queue reordering through these endpoints.
+
+### Playlists
+
+| Say | Action |
+|---|---|
+| Echo play my workout playlist | Match and play a personal playlist |
+| Echo play workout | Prefer a strong match against your playlists, then search tracks |
+| Echo shuffle my workout playlist | Play that playlist with shuffle enabled |
+
+Echo reads your Spotify playlist names into a small local cache. It does not download playlist audio.
+
+### Shuffle, repeat, volume and seeking
+
+| Say | Action |
+|---|---|
+| Echo shuffle on / Echo shuffle off | Enable or disable shuffle |
+| Echo repeat this song | Repeat the current track |
+| Echo repeat playlist | Repeat the current context |
+| Echo repeat off | Disable repeat |
 | Echo volume up / Echo louder | Increase volume by 10% |
 | Echo volume down / Echo quieter | Decrease volume by 10% |
-| Echo mute / Echo unmute | Set volume |
+| Echo set volume to 35 percent | Set volume to 35% |
+| Echo mute / Echo unmute | Mute or restore volume |
+| Echo forward 30 seconds | Seek forward |
+| Echo rewind 15 seconds | Seek backward |
+| Echo seek to 1:25 | Seek to an absolute position |
 
-You can say **"Echo next"** in one phrase, or say **"Echo"**, pause briefly, then give the command. The command is transcribed locally after Spotify pauses.
+### Playback information
 
-If Echo cannot find a Spotify device, open Spotify on the PC and start a track once. Some Spotify Connect devices do not expose remote volume control.
+| Say | Action |
+|---|---|
+| Echo what's playing | Identify the current track and artist |
+| Echo what's next | Show the queue |
 
-## Diagnostics and tests
+If Spotify returns multiple similarly likely tracks, Echo asks for a clearer title/artist instead of deliberately playing a weak match. Adding the artist or requested version (acoustic, live, remix, etc.) improves resolution.
 
-To test the wake detector while Spotify is playing:
+## Microphone privacy
 
-~~~powershell
-python scripts\diagnose_voice.py
-~~~
+The microphone must remain active while Echo is waiting for a wake phrase; otherwise it cannot hear the wake name. This is local microphone capture, not audio uploaded to a website.
 
-The diagnostic does not print general speech transcripts. It only reports when the restricted wake-word detector sees "Echo", so song lyrics are not dumped to the console.
+While idle:
 
-Unit tests:
+- PortAudio captures microphone frames locally.
+- WebRTC performs local noise suppression and voice activity detection.
+- Vosk runs a restricted wake-word grammar.
+- Echo does not run general-purpose transcription while waiting.
+- Audio frames are held briefly in RAM only; they are not recorded to files or sent to cloud speech services.
+
+After wake detection:
+
+1. Echo pauses Spotify if it was playing.
+2. Whisper transcribes one short command locally.
+3. Echo executes the matching Spotify action.
+4. Playback is restored for queue, skip, volume, repeat, shuffle, seek and read-only commands when playback was active before. Explicit pause remains paused; play/resume starts the requested playback.
+
+**Privacy mode** closes the microphone stream and releases the input device. The orb changes to **MICROPHONE OFF**. Reactivate listening from the orb when ready.
+
+Spotify authentication, playlist lookup, search and playback commands do use the internet because they call Spotify's service. Voice audio and transcripts do not.
+
+## Tests
+
+Run the unit suite:
 
 ~~~powershell
 python -m unittest discover -s tests -v
 ~~~
 
-No microphone recordings or Spotify tokens are committed to this repository.
+The CI workflow runs the tests and compiles the package on Python 3.12 and 3.14.
+
+The repository tests cover command parsing, wake-word aliases, local privacy-mode release, track matching, queue insertion, queue reading, playlist pagination/caching, playback device targeting and Spotify response handling. Live microphone quality and real Spotify playback still need a final manual test on the target Windows laptop.
 
 ## Technical references
 
-- [Vosk models and accuracy trade-offs](https://alphacephei.com/vosk/models)
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-- [WebRTC audio processing and VAD](https://github.com/strands-labs/pywebrtc-audio)
-- [Spotify Authorization Code with PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)
-- [Spotify playback controls](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback)
+- Vosk offline speech recognition: https://github.com/alphacep/vosk-api
+- faster-whisper: https://github.com/SYSTRAN/faster-whisper
+- WebRTC audio processing: https://github.com/strands-labs/pywebrtc-audio
+- Spotify Search: https://developer.spotify.com/documentation/web-api/reference/search
+- Spotify current user's playlists: https://developer.spotify.com/documentation/web-api/reference/get-a-list-of-current-users-playlists
+- Spotify Add to Queue: https://developer.spotify.com/documentation/web-api/reference/add-to-queue
+- Spotify Get Queue: https://developer.spotify.com/documentation/web-api/reference/get-queue
+- Spotify scopes: https://developer.spotify.com/documentation/web-api/concepts/scopes
