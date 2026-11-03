@@ -8,6 +8,7 @@ class CommandParserTests(unittest.TestCase):
     def test_wake_word_and_keyword_command(self):
         self.assertEqual(parse_command("Echo next"), Command("next"))
         self.assertEqual(parse_command("AY-ko, next please"), Command("next"))
+        self.assertEqual(parse_command("Echo, please skip this song"), Command("next"))
         self.assertEqual(parse_command("Hey Aiko, skip the song"), Command("next"))
 
     def test_full_sentence_transport_priority(self):
@@ -15,6 +16,7 @@ class CommandParserTests(unittest.TestCase):
         self.assertEqual(parse_command("Echo skip this song"), Command("next"))
         self.assertEqual(parse_command("Echo go back"), Command("previous"))
         self.assertEqual(parse_command("Echo pause the music"), Command("pause"))
+        self.assertEqual(parse_command("Echo stop the playback"), Command("pause"))
         self.assertEqual(parse_command("Echo continue playing"), Command("resume"))
 
     def test_song_title_is_not_mistaken_for_next_command(self):

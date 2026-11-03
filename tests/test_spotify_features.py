@@ -117,6 +117,18 @@ class SpotifyFeatureTests(unittest.TestCase):
 
         self.assertEqual(result["id"], "p1")
 
+    def test_short_playlist_name_prefers_a_strong_personal_playlist_match(self):
+        client = self.make_client()
+        playlist = {"id": "p1", "uri": "spotify:playlist:p1", "name": "Workout Mix"}
+        client.find_playlist = Mock(return_value=playlist)
+        client._play_playlist = Mock(return_value="Playing playlist Workout Mix")
+
+        result = client._play_media(Command("play", "workout", target_type="auto"))
+
+        self.assertEqual(result, "Playing playlist Workout Mix")
+        client._play_playlist.assert_called_once_with(playlist, None, shuffle=False)
+        client._request.assert_not_called()
+
     def test_play_playlist_uses_context_uri(self):
         client = self.make_client()
         playlist = {

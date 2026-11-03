@@ -592,7 +592,7 @@ class SpotifyClient:
             playlist = self.find_playlist(playlist_query)
             # A strong personal-playlist name match wins over the public
             # catalogue; otherwise interpret the request as a track.
-            if playlist and _similarity(playlist_query, str(playlist.get("name", ""))) >= 0.84:
+            if playlist and _similarity(playlist_query, str(playlist.get("name", ""))) >= 0.78:
                 return self._play_playlist(playlist, device_id, shuffle=command.mode == "shuffle")
 
         return self._play_track(command.query, command.artist, device_id)

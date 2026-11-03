@@ -168,24 +168,32 @@ def parse_command(transcript: str) -> Command | None:
     if text in {"volume down", "turn it down", "quieter", "decrease volume", "decrease the volume", "make it quieter"}:
         return Command("volume", "-10")
 
-    # Transport controls.
-    if text in {
+    # Transport controls. Strip a trailing politeness marker only for this
+    # control-intent check, so song titles ending in "please" are untouched.
+    transport_text = re.sub(r"\s+(?:please|thanks|thank you)$", "", text).strip()
+    if transport_text in {
         "next", "next song", "next track", "skip", "skip song", "skip this song",
         "skip this track", "go next", "go to next", "go to the next song",
         "go to the next track", "play next", "play the next", "play next song",
         "play the next song", "play next track", "play the next track",
     }:
         return Command("next")
-    if text in {
+    if transport_text in {
         "previous", "previous song", "previous track", "prev", "back",
         "go back", "go to previous", "go to the previous song",
         "go to the previous track", "last song", "play previous",
         "play the previous",
     }:
         return Command("previous")
-    if text in {"pause", "pause music", "pause playback", "stop", "stop music", "stop playback"}:
+    if transport_text in {
+        "pause", "pause music", "pause the music", "pause playback", "pause the playback",
+        "stop", "stop music", "stop the music", "stop playback", "stop the playback",
+    }:
         return Command("pause")
-    if text in {"resume", "continue", "unpause", "resume music", "continue playing", "start playing"}:
+    if transport_text in {
+        "resume", "continue", "unpause", "resume music", "resume the music",
+        "continue playing", "start playing", "carry on",
+    }:
         return Command("resume")
 
     # Explicit playlist phrases.
