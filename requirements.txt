@@ -2,4 +2,3 @@ sounddevice>=0.5.6
 vosk>=0.3.45
 faster-whisper>=1.2.1
 pywebrtc-audio>=0.2.0
-soundcard>=0.4.6

@@ -211,6 +211,24 @@ class SpotifyClient:
         except URLError as exc:
             raise SpotifyError(f"Could not reach Spotify: {exc.reason}") from exc
 
+    def pause_for_command(self) -> dict[str, Any]:
+        """Pause current Spotify playback while Echo listens to the user's command."""
+        state = self._request("GET", "/me/player")
+        device_id = (state.get("device") or {}).get("id")
+        was_playing = bool(state.get("is_playing"))
+        if was_playing:
+            params = {"device_id": device_id} if device_id else None
+            self._request("PUT", "/me/player/pause", params=params)
+        return {"was_playing": was_playing, "device_id": device_id}
+
+    def resume_after_command(self, snapshot: dict[str, Any]) -> None:
+        """Restore playback only when Echo paused a track that was playing."""
+        if not snapshot or not snapshot.get("was_playing"):
+            return
+        device_id = snapshot.get("device_id")
+        params = {"device_id": device_id} if device_id else None
+        self._request("PUT", "/me/player/play", params=params)
+
     def _device(self) -> dict[str, Any] | None:
         response = self._request("GET", "/me/player/devices")
         devices = [d for d in response.get("devices", []) if d.get("id") and not d.get("is_restricted")]
