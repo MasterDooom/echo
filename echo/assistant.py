@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import queue
-import re
 import threading
 import time
 from collections import deque
@@ -15,6 +14,7 @@ from .audio import Microphone
 from .commands import parse_command
 from .model import ensure_model
 from .spotify import SpotifyClient
+from .wake import wake_word_detected
 
 log = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
@@ -22,7 +22,6 @@ FRAME_LENGTH = 800  # 50 ms frames for responsive local wake detection
 PRE_ROLL_FRAMES = 32  # 1.6 seconds; keeps words spoken directly after "Echo"
 COMMAND_WINDOW_SECONDS = 5.0
 WAKE_GRAMMAR = json.dumps(["echo", "hey echo", "[unk]"])
-WAKE_WORD_RE = re.compile(r"\\becho\\b", re.IGNORECASE)
 
 
 class EchoAssistant(threading.Thread):
@@ -59,7 +58,7 @@ class EchoAssistant(threading.Thread):
             text = json.loads(recognizer.Result()).get("text", "")
         else:
             text = json.loads(recognizer.PartialResult()).get("partial", "")
-        return bool(WAKE_WORD_RE.search(text))
+        return wake_word_detected(text)
 
     def run(self) -> None:
         try:
