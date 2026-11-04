@@ -180,7 +180,7 @@ def parse_command(transcript: str) -> Command | None:
         return Command("next")
     if transport_text in {
         "previous", "previous song", "previous track", "previous one", "the previous one", "prev", "back",
-        "go back", "go back one", "go to previous", "go to the previous", "go to the previous song",
+        "go back", "go back one", "go to previous", "go to the previous", "go to the previous one", "go to the previous song",
         "go to the previous track", "last song", "last track", "last one", "play previous",
         "play the previous", "play the previous one", "move to the previous",
     }:
