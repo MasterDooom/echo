@@ -140,6 +140,24 @@ class CommandParserTests(unittest.TestCase):
         self.assertEqual(clean_transcript("Echo"), "")
         self.assertIsNone(parse_command("Echo"))
 
+    def test_track_ranker_prefers_spotify_top_canonical_result(self):
+        tracks = [
+            {
+                "name": "Blinding Lights",
+                "artists": [{"name": "The Weeknd"}],
+                "album": {"name": "After Hours"},
+                "uri": "spotify:track:weeknd",
+            },
+            {
+                "name": "Blinding Lights",
+                "artists": [{"name": "8D Tunes"}],
+                "album": {"name": "Blinding Lights (8D Audio)"},
+                "uri": "spotify:track:8d",
+            },
+        ]
+        best = rank_track("blinding lights", tracks)
+        self.assertEqual(best["uri"], "spotify:track:weeknd")
+
     def test_track_ranker_uses_artist_and_title(self):
         tracks = [
             {
