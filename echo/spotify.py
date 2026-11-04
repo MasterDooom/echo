@@ -85,7 +85,8 @@ def _similarity(left: str, right: str) -> float:
 _VERSION_TERMS = {
     "remix", "live", "acoustic", "karaoke", "cover", "instrumental",
     "slowed", "sped", "speed", "nightcore", "edit", "demo", "rework",
-    "bootleg", "radio edit", "extended mix",
+    "bootleg", "radio edit", "extended mix", "8d", "8d audio", "8d tunes",
+    "bass boosted", "reverb", "loop", "tribute",
 }
 
 
@@ -113,14 +114,22 @@ def rank_tracks(
         title_score = _similarity(query, title)
         artist_score = _similarity(artist_hint, artists) if artist_hint else 0.0
 
+        # Spotify's search endpoint already ranks results using its relevance
+        # system and (where available) listening preferences. Preserve that
+        # ordering as a meaningful signal: our old title-only score treated
+        # an obscure same-title upload as equal to the canonical recording.
+        position_score = 1.0 / (index + 1)
         if artist_hint:
-            score = 0.70 * title_score + 0.30 * artist_score
+            score = 0.62 * title_score + 0.28 * artist_score + 0.10 * position_score
         else:
-            # Without an artist hint, title is the main signal. Spotify's own
-            # relevance ordering is a small tie-breaker, never the main score.
-            score = 0.94 * title_score + 0.06 / (index + 1)
+            score = 0.72 * title_score + 0.28 * position_score
 
-        item_version_text = f"{title} {track.get('album', {}).get('name', '')}"
+        album = track.get("album") or {}
+        item_version_text = " ".join((
+            title,
+            str(album.get("name") or ""),
+            artists,
+        ))
         has_alternate_version = any(
             term in _plain(item_version_text) for term in _VERSION_TERMS
         )
