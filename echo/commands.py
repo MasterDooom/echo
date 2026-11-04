@@ -215,7 +215,7 @@ def parse_command(transcript: str) -> Command | None:
     # complete title/artist is present; only the bare control phrase above
     # is treated as NEXT.
     play_match = re.match(
-        r"^(?:play|play me|put on|start|listen to|find me|search for)\s+(.+)$",
+        r"^(?:play me|play|put on|start|listen to|find me|search for)\s+(.+)$",
         text,
     )
     if play_match:
