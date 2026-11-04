@@ -172,27 +172,27 @@ def parse_command(transcript: str) -> Command | None:
     # control-intent check, so song titles ending in "please" are untouched.
     transport_text = re.sub(r"\s+(?:please|thanks|thank you)$", "", text).strip()
     if transport_text in {
-        "next", "next song", "next track", "skip", "skip song", "skip the song", "skip this song",
-        "skip this track", "go next", "go to next", "go to the next song",
+        "next", "next song", "next track", "next one", "the next one", "skip", "skip song", "skip the song", "skip this song",
+        "skip this track", "skip it", "go next", "go to next", "go to the next", "go to the next song",
         "go to the next track", "play next", "play the next", "play next song",
-        "play the next song", "play next track", "play the next track",
+        "play the next song", "play next track", "play the next track", "play the next one", "move to the next", "move to next",
     }:
         return Command("next")
     if transport_text in {
-        "previous", "previous song", "previous track", "prev", "back",
-        "go back", "go to previous", "go to the previous song",
-        "go to the previous track", "last song", "play previous",
-        "play the previous",
+        "previous", "previous song", "previous track", "previous one", "the previous one", "prev", "back",
+        "go back", "go back one", "go to previous", "go to the previous", "go to the previous song",
+        "go to the previous track", "last song", "last track", "last one", "play previous",
+        "play the previous", "play the previous one", "move to the previous",
     }:
         return Command("previous")
     if transport_text in {
-        "pause", "pause music", "pause the music", "pause playback", "pause the playback",
-        "stop", "stop music", "stop the music", "stop playback", "stop the playback",
+        "pause", "pause music", "pause the music", "pause playback", "pause the playback", "pause the song", "pause this song",
+        "stop", "stop music", "stop the music", "stop playback", "stop the playback", "stop the song", "hold on",
     }:
         return Command("pause")
     if transport_text in {
         "resume", "continue", "unpause", "resume music", "resume the music",
-        "continue playing", "start playing", "carry on",
+        "continue playing", "continue the song", "start playing", "start the music", "carry on", "keep playing",
     }:
         return Command("resume")
 
@@ -214,7 +214,10 @@ def parse_command(transcript: str) -> Command | None:
     # Generic media request. Keep "The Next Episode" as a song when the
     # complete title/artist is present; only the bare control phrase above
     # is treated as NEXT.
-    play_match = re.match(r"^(?:play|put on|start|listen to)\s+(.+)$", text)
+    play_match = re.match(
+        r"^(?:play|play me|put on|start|listen to|find me|search for)\s+(.+)$",
+        text,
+    )
     if play_match:
         query, artist = _split_track_artist(play_match.group(1))
         if query in {"music", "something", "anything"}:

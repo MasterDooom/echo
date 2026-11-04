@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 
 
 class Microphone:
-    """Low-latency microphone capture with local WebRTC noise suppression."""
+    """Microphone capture with local processing and access to original PCM."""
 
     def __init__(self, sample_rate: int = 16000, frame_length: int = 160) -> None:
         self.sample_rate = sample_rate
@@ -29,9 +29,11 @@ class Microphone:
             if requested.isdigit():
                 return int(requested)
             match = next(
-                (i for i, item in enumerate(devices)
-                 if requested.lower() in item["name"].lower()
-                 and item["max_input_channels"] > 0),
+                (
+                    i for i, item in enumerate(devices)
+                    if requested.lower() in item["name"].lower()
+                    and item["max_input_channels"] > 0
+                ),
                 None,
             )
             if match is not None:
@@ -46,8 +48,10 @@ class Microphone:
             candidates.append((index, host, is_default))
 
         directsound_default = next(
-            (index for index, host, is_default in candidates
-             if host == "Windows DirectSound" and is_default),
+            (
+                index for index, host, is_default in candidates
+                if host == "Windows DirectSound" and is_default
+            ),
             None,
         )
         if directsound_default is not None:
@@ -102,7 +106,8 @@ class Microphone:
             self.close()
             raise
 
-    def read(self, timeout: float = 0.25) -> bytes | None:
+    def read_pair(self, timeout: float = 0.25) -> tuple[bytes, bytes] | None:
+        """Return (processed_pcm_for_wake/VAD, original_pcm_for_transcription)."""
         try:
             raw = self.frames.get(timeout=timeout)
         except queue.Empty:
@@ -113,7 +118,12 @@ class Microphone:
         clean = self._processor.process(near)
         self.speech_probability = float(self._processor.speech_probability)
         pcm = (np.clip(clean, -1.0, 1.0) * 32767.0).astype(np.int16)
-        return pcm.tobytes()
+        return pcm.tobytes(), raw
+
+    def read(self, timeout: float = 0.25) -> bytes | None:
+        """Backward-compatible processed PCM read."""
+        pair = self.read_pair(timeout)
+        return pair[0] if pair is not None else None
 
     def clear(self) -> None:
         while True:
@@ -133,7 +143,10 @@ class Microphone:
             stream.stop()
         except Exception as exc:
             first_error = exc
-            log.warning("Microphone stop failed; still attempting to close the device: %s", exc)
+            log.warning(
+                "Microphone stop failed; still attempting to close the device: %s",
+                exc,
+            )
 
         try:
             stream.close()

@@ -7,7 +7,7 @@ Echo is designed to stay in the background as a small orb near the taskbar. Say 
 ## What it does
 
 - Vosk runs a constrained wake-word grammar locally while idle.
-- faster-whisper base.en transcribes only the short command after wake-up.
+- faster-whisper small.en (CPU int8) transcribes only the short command after wake-up; audio is passed to Whisper from the original microphone PCM, not the noise-suppressed wake detector stream.
 - A deterministic local intent parser distinguishes playback actions, track requests, playlist requests and queue requests.
 - Spotify search resolves tracks using title, artist and version metadata.
 - Your Spotify playlists are fetched, paginated and cached locally for name matching.
@@ -65,7 +65,15 @@ Spotify playback control and queue insertion require Premium and an available Sp
 python -m echo --download-model
 ~~~
 
-The Vosk wake-word model and Whisper base.en model are downloaded once and stored under %LOCALAPPDATA%\Echo\models. Speech recognition runs locally after the downloads complete.
+The Vosk wake-word model and Whisper small.en model are downloaded once and stored under %LOCALAPPDATA%\Echo\models. Speech recognition runs locally after the downloads complete.
+
+To verify the microphone transcription separately from Spotify, pause Spotify and run:
+
+~~~powershell
+python -m echo --test-speech
+~~~
+
+This records one short utterance in RAM only, then prints the local transcript, parsed intent and audio-level diagnostics. It does not save or upload the recording. If the transcript is wrong, the issue is microphone capture or speech recognition; if the transcript is right but the intent is wrong, the issue is command parsing.
 
 ## Start Echo
 

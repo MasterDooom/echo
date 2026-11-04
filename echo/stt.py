@@ -1,24 +1,31 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Iterable
 
 from .config import app_data_dir
 
-MODEL_NAME = os.environ.get("ECHO_STT_MODEL", "base.en").strip() or "base.en"
+log = logging.getLogger(__name__)
+
+# Small is a deliberate accuracy/latency trade-off for South Asian English.
+# It is still local and CPU-int8; users can override it in .env.
+MODEL_NAME = os.environ.get("ECHO_STT_MODEL", "small.en").strip() or "small.en"
 INITIAL_PROMPT = (
-    "Echo, a voice assistant. Commands include next, skip, previous, pause, resume, "
-    "play a song, volume up, volume down, mute, and unmute. Spotify song titles and artists."
+    "Indian English speech. A short spoken voice command. "
+    "The speaker may name songs, music artists, albums or personal playlists. "
+    "Transcribe the words that were actually spoken, including the complete title."
 )
 
 
 class CommandRecognizer:
-    """Higher-accuracy local transcription for the short command after wake."""
+    """Local Whisper transcription for short voice commands."""
 
     def __init__(self) -> None:
         self.model = None
         self.model_name = MODEL_NAME
+        self.last_diagnostics: dict[str, float | int | str] = {}
 
     @property
     def download_root(self) -> Path:
@@ -31,6 +38,7 @@ class CommandRecognizer:
             return
         from faster_whisper import WhisperModel
 
+        log.info("Loading local speech model %s", self.model_name)
         self.model = WhisperModel(
             self.model_name,
             device="cpu",
@@ -39,37 +47,85 @@ class CommandRecognizer:
             num_workers=1,
             download_root=str(self.download_root),
         )
+        log.info("Local speech model %s is ready", self.model_name)
 
-    def transcribe_frames(self, frames: Iterable[bytes]) -> str:
+    @staticmethod
+    def _prepare_audio(frames: list[bytes]):
         import numpy as np
 
         audio_bytes = b"".join(frames)
-        if len(audio_bytes) < 3200:  # Less than 100 ms of 16 kHz mono int16.
+        if len(audio_bytes) < 6400:  # Under 200 ms of 16 kHz mono int16.
+            return None
+
+        audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        audio -= float(np.mean(audio))
+
+        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+        rms = float(np.sqrt(np.mean(audio * audio))) if audio.size else 0.0
+        if rms < 0.0015 or peak < 0.006:
+            return None
+
+        # Use conservative peak-safe normalization. This helps lower-volume
+        # laptop microphone input without aggressively boosting room noise.
+        target_rms = 0.075
+        gain = min(4.0, target_rms / max(rms, 0.001))
+        audio = np.clip(audio * gain, -0.98, 0.98).astype(np.float32)
+        return audio, rms, peak, len(audio) / 16000.0
+
+    def transcribe_frames(self, frames: Iterable[bytes]) -> str:
+        prepared = self._prepare_audio(list(frames))
+        if prepared is None:
+            self.last_diagnostics = {"reason": "audio_too_short_or_quiet"}
+            log.info("Speech capture was too short or too quiet")
             return ""
 
+        audio, input_rms, input_peak, duration = prepared
         self.warm()
-        audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        segments, _info = self.model.transcribe(
+
+        # Do not run a second VAD pass here: capture already uses microphone
+        # VAD and clips the utterance. Double filtering disproportionately
+        # hurts short, quiet consonants and accented speech.
+        segments, info = self.model.transcribe(
             audio,
             language="en",
-            beam_size=3,
+            task="transcribe",
+            beam_size=5,
+            patience=1.1,
             initial_prompt=INITIAL_PROMPT,
             condition_on_previous_text=False,
             temperature=0.0,
-            vad_filter=True,
-            vad_parameters={
-                "threshold": 0.5,
-                "min_speech_duration_ms": 120,
-                "min_silence_duration_ms": 280,
-                "speech_pad_ms": 120,
-            },
+            vad_filter=False,
             no_speech_threshold=0.6,
             log_prob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
         )
 
         accepted = []
+        segment_diagnostics = []
+        # faster-whisper segments are lazy; iterate to complete transcription.
         for segment in segments:
             text = segment.text.strip()
-            if text and segment.no_speech_prob <= 0.65:
+            segment_diagnostics.append({
+                "text": text,
+                "no_speech_prob": float(segment.no_speech_prob),
+                "avg_logprob": float(segment.avg_logprob),
+            })
+            # no_speech_prob alone is not a sufficient reason to discard a
+            # segment: Whisper also considers average log probability.
+            if text:
                 accepted.append(text)
-        return " ".join(accepted).strip()
+
+        transcript = " ".join(accepted).strip()
+        self.last_diagnostics = {
+            "model": self.model_name,
+            "duration_seconds": round(duration, 2),
+            "input_rms": round(input_rms, 5),
+            "input_peak": round(input_peak, 5),
+            "language": getattr(info, "language", "en") or "en",
+            "language_probability": round(float(getattr(info, "language_probability", 0.0)), 3),
+            "segments": len(segment_diagnostics),
+            "transcript": transcript,
+        }
+        log.info("Speech diagnostics: %s", self.last_diagnostics)
+        log.debug("Speech segment diagnostics: %s", segment_diagnostics)
+        return transcript

@@ -589,7 +589,16 @@ class SpotifyClient:
 
         if command.target_type == "auto" and not command.artist:
             playlist_query = re.sub(r"^my\s+", "", command.query, flags=re.IGNORECASE)
-            playlist = self.find_playlist(playlist_query)
+            try:
+                playlist = self.find_playlist(playlist_query)
+            except AmbiguousSpotifyMatch:
+                # A genuine ambiguity should be clarified, not silently treated as a song.
+                raise
+            except SpotifyError as exc:
+                # A failed playlist lookup must never block ordinary track search.
+                # Explicit playlist requests above still surface their permission/API errors.
+                log.warning("Personal playlist lookup unavailable; falling back to track search: %s", exc)
+                playlist = None
             # A strong personal-playlist name match wins over the public
             # catalogue; otherwise interpret the request as a track.
             if playlist and _similarity(playlist_query, str(playlist.get("name", ""))) >= 0.78:

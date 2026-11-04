@@ -20,17 +20,17 @@ from .wake import wake_word_detected
 log = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 160
-PRE_ROLL_FRAMES = 24
+PRE_ROLL_FRAMES = 48  # Preserve the tail of commands spoken immediately after AY-koh
 WAKE_GRAMMAR = json.dumps([
     "echo", "ecco", "aiko", "ayko", "eyko", "ayco", "eyco",
     "ay ko", "ey ko", "ay-ko", "ey-ko", "hey echo", "hey aiko", "[unk]"
 ])
 
-COMMAND_WINDOW_SECONDS = 4.5
-MIN_CAPTURE_SECONDS = 0.8
-NO_COMMAND_WAIT_SECONDS = 2.2
-VAD_THRESHOLD = 0.30
-END_SILENCE_FRAMES = 45
+COMMAND_WINDOW_SECONDS = 8.0
+MIN_CAPTURE_SECONDS = 0.55
+NO_COMMAND_WAIT_SECONDS = 3.0
+VAD_THRESHOLD = 0.20
+END_SILENCE_FRAMES = 65
 
 
 class EchoAssistant(threading.Thread):
@@ -126,12 +126,13 @@ class EchoAssistant(threading.Thread):
                 if self.microphone is None:
                     self.microphone = self._open_microphone()
 
-                raw = self.microphone.read(timeout=0.20)
-                if raw is None:
+                pair = self.microphone.read_pair(timeout=0.20)
+                if pair is None:
                     continue
-                history.append(raw)
+                wake_audio, original_audio = pair
+                history.append(original_audio)
 
-                if not self._wake_detected(wake, raw):
+                if not self._wake_detected(wake, wake_audio):
                     continue
 
                 self.emit("status", "awake")
@@ -163,18 +164,22 @@ class EchoAssistant(threading.Thread):
                 command = None
                 try:
                     transcript = command_recognizer.transcribe_frames(frames)
+                    log.info("Recognized command transcript: %r", transcript)
                     command = parse_command(transcript)
                     if command is None:
-                        self.emit("message", f"Didn't catch that · {transcript[:48]}" if transcript else "Didn't catch that")
+                        detail = f"I heard: {transcript[:90]}" if transcript else "I didn't hear a command"
+                        self.emit("message", f"{detail} · try again")
                         self._restore_playback(spotify, playback_snapshot)
                     elif command.kind == "pause":
                         self.emit("message", "Paused")
                     else:
+                        log.info("Parsed command: %s query=%r artist=%r mode=%r target=%r",
+                                 command.kind, command.query, command.artist, command.mode, command.target_type)
                         result = spotify.execute(
                             command,
                             device_id=playback_snapshot.get("device_id"),
                         )
-                        self.emit("message", result)
+                        self.emit("message", f"{result} · heard: {transcript[:45]}")
                         if command.kind not in {"play", "resume"}:
                             self._restore_playback(spotify, playback_snapshot)
                 except Exception as exc:
@@ -210,13 +215,21 @@ class EchoAssistant(threading.Thread):
             and not self.paused.is_set()
             and time.monotonic() < deadline
         ):
-            raw = self.microphone.read(timeout=0.15)
-            if raw is None:
+            pair = self.microphone.read_pair(timeout=0.15)
+            if pair is None:
                 continue
-            frames.append(raw)
+            _processed_audio, original_audio = pair
+            frames.append(original_audio)
 
             probability = self.microphone.speech_probability
-            if probability >= VAD_THRESHOLD:
+            # WebRTC VAD can under-score quiet Indian-English consonants.
+            # Add a conservative raw-energy fallback for laptop microphones.
+            samples = self.microphone._numpy.frombuffer(original_audio, dtype=self.microphone._numpy.int16)
+            rms = float(self.microphone._numpy.sqrt(self.microphone._numpy.mean(
+                samples.astype(self.microphone._numpy.float32) ** 2
+            ))) / 32768.0
+            speech_detected = probability >= VAD_THRESHOLD or rms >= 0.005
+            if speech_detected:
                 speech_started = True
                 trailing_silence = 0
             elif speech_started:

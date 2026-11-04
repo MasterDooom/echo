@@ -33,6 +33,21 @@ class CommandParserTests(unittest.TestCase):
             Command("play", "back to black", target_type="auto"),
         )
 
+    def test_more_natural_command_variants(self):
+        self.assertEqual(parse_command("Echo play the next one"), Command("next"))
+        self.assertEqual(parse_command("Echo skip it"), Command("next"))
+        self.assertEqual(parse_command("Echo go to the previous one"), Command("previous"))
+        self.assertEqual(parse_command("Echo pause the song"), Command("pause"))
+        self.assertEqual(parse_command("Echo keep playing"), Command("resume"))
+        self.assertEqual(
+            parse_command("Echo play me Save Your Tears"),
+            Command("play", "save your tears", target_type="auto"),
+        )
+        self.assertEqual(
+            parse_command("Echo find me Blinding Lights"),
+            Command("play", "blinding lights", target_type="auto"),
+        )
+
     def test_track_play_request_with_artist(self):
         self.assertEqual(
             parse_command("Echo please play Save Your Tears by The Weeknd and Ariana Grande"),

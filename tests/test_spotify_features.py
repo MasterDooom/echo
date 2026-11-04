@@ -129,6 +129,33 @@ class SpotifyFeatureTests(unittest.TestCase):
         client._play_playlist.assert_called_once_with(playlist, None, shuffle=False)
         client._request.assert_not_called()
 
+    def test_track_play_falls_back_when_playlist_access_is_unavailable(self):
+        from echo.spotify import SpotifyError
+
+        client = self.make_client()
+        client.find_playlist = Mock(side_effect=SpotifyError("missing playlist scope"))
+        client._play_track = Mock(return_value="Playing Blinding Lights — The Weeknd")
+
+        result = client._play_media(
+            Command("play", "blinding lights", target_type="auto")
+        )
+
+        self.assertEqual(result, "Playing Blinding Lights — The Weeknd")
+        client._play_track.assert_called_once_with("blinding lights", "", None)
+
+    def test_explicit_playlist_request_does_not_silently_fall_back_to_track(self):
+        from echo.spotify import SpotifyError
+
+        client = self.make_client()
+        client.find_playlist = Mock(side_effect=SpotifyError("missing playlist scope"))
+        client._play_track = Mock()
+
+        with self.assertRaisesRegex(SpotifyError, "missing playlist scope"):
+            client._play_media(
+                Command("play", "workout", target_type="playlist")
+            )
+        client._play_track.assert_not_called()
+
     def test_play_playlist_uses_context_uri(self):
         client = self.make_client()
         playlist = {
