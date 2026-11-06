@@ -37,6 +37,7 @@ WAKE_RMS_FALLBACK = 0.006
 WAKE_VERIFY_POSTROLL_FRAMES = 45  # 450 ms after a candidate, before Spotify is touched.
 WAKE_REJECT_COOLDOWN_SECONDS = 1.25
 WAKE_REQUIRED_HITS = 4
+OPENWAKE_VAD_WINDOW_FRAMES = 8  # Match the detector's 80 ms inference batch.
 END_SILENCE_FRAMES = 90  # 900 ms, so a natural pause does not clip the final word.
 
 
@@ -198,11 +199,13 @@ class EchoAssistant(threading.Thread):
                 )
 
             history: deque[bytes] = deque(maxlen=PRE_ROLL_FRAMES)
+            wake_vad_history: deque[bool] = deque(maxlen=OPENWAKE_VAD_WINDOW_FRAMES)
             rejected_until = 0.0
             while not self.shutdown.is_set():
                 if self.paused.is_set():
                     self._release_microphone()
                     history.clear()
+                    wake_vad_history.clear()
                     if wake is not None:
                         wake.Reset()
                     wake_stabilizer.reset()
@@ -214,6 +217,7 @@ class EchoAssistant(threading.Thread):
                         break
                     self.microphone = self._open_microphone()
                     history.clear()
+                    wake_vad_history.clear()
                     if wake is not None:
                         wake.Reset()
                     wake_stabilizer.reset()
@@ -234,12 +238,16 @@ class EchoAssistant(threading.Thread):
                 # Always feed the streaming models, but require speech activity
                 # and repeated detections before considering a wake candidate.
                 speech_active, vad_score, frame_rms = self._speech_active(wake_audio)
+                wake_vad_history.append(speech_active)
                 if open_wake.enabled:
                     scored = open_wake.process(wake_audio)
                     if scored is None:
                         continue
                     raw_candidate, wake_score = scored
-                    candidate = raw_candidate and speech_active
+                    chunk_speech_active = (
+                        sum(wake_vad_history) >= 3
+                    )
+                    candidate = raw_candidate and chunk_speech_active
                     if raw_candidate:
                         log.debug(
                             "Wake model score=%.3f vad=%.3f rms=%.4f",
@@ -247,15 +255,17 @@ class EchoAssistant(threading.Thread):
                             vad_score,
                             frame_rms,
                         )
+                    stabilizer_speech_active = chunk_speech_active
                 else:
                     assert wake is not None
                     candidate = self._wake_candidate(wake, wake_audio) and speech_active
                     wake_score = 1.0 if candidate else 0.0
+                    stabilizer_speech_active = speech_active
 
                 if time.monotonic() < rejected_until:
                     wake_stabilizer.reset()
                     continue
-                if not wake_stabilizer.update(candidate, speech_active):
+                if not wake_stabilizer.update(candidate, stabilizer_speech_active):
                     continue
 
                 # This is only a candidate. Do not pause Spotify or change
@@ -272,6 +282,7 @@ class EchoAssistant(threading.Thread):
                     command_recognizer, seed
                 )
                 history.clear()
+                wake_vad_history.clear()
                 if wake is not None:
                     wake.Reset()
                 open_wake.reset()
