@@ -160,8 +160,10 @@ class EchoAssistant(threading.Thread):
         try:
             self.emit("status", "loading")
 
-            wake_stabilizer = WakeWordStabilizer(WAKE_REQUIRED_HITS)
             open_wake = OpenWakeWordDetector()
+            # openWakeWord already smooths scores across a 3-window buffer;
+            # the lightweight Vosk fallback needs a longer consecutive-hit gate.
+            wake_stabilizer = WakeWordStabilizer(2 if open_wake.enabled else WAKE_REQUIRED_HITS)
             wake: KaldiRecognizer | None = None
             if not open_wake.enabled:
                 # Transitional local fallback: strict Vosk candidate detection
