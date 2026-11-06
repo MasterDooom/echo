@@ -136,7 +136,7 @@ class EchoAssistant(threading.Thread):
         postroll_activity: deque[bool] = deque(maxlen=25)
         for _ in range(WAKE_VERIFY_POSTROLL_FRAMES):
             if self.shutdown.is_set() or self.paused.is_set():
-                return False, frames, ""
+                return False, frames, "", False
             pair = self.microphone.read_pair(timeout=0.15)
             if pair is not None:
                 processed, original = pair
