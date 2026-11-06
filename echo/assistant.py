@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import queue
 import threading
 import time
@@ -203,7 +204,6 @@ class EchoAssistant(threading.Thread):
                     self._release_microphone()
                     history.clear()
                     if wake is not None:
-                        if wake is not None:
                         wake.Reset()
                     wake_stabilizer.reset()
                     open_wake.reset()
@@ -214,7 +214,8 @@ class EchoAssistant(threading.Thread):
                         break
                     self.microphone = self._open_microphone()
                     history.clear()
-                    wake.Reset()
+                    if wake is not None:
+                        wake.Reset()
                     wake_stabilizer.reset()
                     open_wake.reset()
                     self.emit("status", "listening")
