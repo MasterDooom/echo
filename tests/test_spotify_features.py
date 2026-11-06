@@ -30,6 +30,7 @@ class SpotifyFeatureTests(unittest.TestCase):
             "uri": "spotify:track:weeknd-id",
             "name": "Blinding Lights",
             "artists": [{"name": "The Weeknd"}],
+            "album": {"uri": "spotify:album:after-hours"},
         }
         client.search_track = Mock(return_value=track)
         client.get_playback_state = Mock(return_value={
@@ -46,7 +47,10 @@ class SpotifyFeatureTests(unittest.TestCase):
             "PUT",
             "/me/player/play",
             params={"device_id": "device-123"},
-            body={"uris": ["spotify:track:weeknd-id"]},
+            body={
+                "context_uri": "spotify:album:after-hours",
+                "offset": {"uri": "spotify:track:weeknd-id"},
+            },
         )
 
     def test_play_track_does_not_claim_success_when_player_remains_idle(self):
