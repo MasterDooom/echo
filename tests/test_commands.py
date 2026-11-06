@@ -140,6 +140,18 @@ class CommandParserTests(unittest.TestCase):
         self.assertEqual(clean_transcript("Echo"), "")
         self.assertIsNone(parse_command("Echo"))
 
+    def test_sentence_final_duplicate_wake_word_is_removed(self):
+        self.assertEqual(
+            parse_command("Echo. Play blinding lights. Echo."),
+            Command("play", "blinding lights", target_type="auto"),
+        )
+
+    def test_track_named_echo_is_not_removed(self):
+        self.assertEqual(
+            parse_command("Echo, play Echo"),
+            Command("play", "echo", target_type="auto"),
+        )
+
     def test_track_ranker_prefers_spotify_top_canonical_result(self):
         tracks = [
             {
