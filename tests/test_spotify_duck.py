@@ -19,13 +19,34 @@ class SpotifyDuckTests(unittest.TestCase):
 
         snapshot = client.pause_for_command()
 
-        self.assertEqual(snapshot, {"was_playing": True, "device_id": "device-123"})
+        self.assertEqual(
+            snapshot,
+            {"was_playing": True, "device_id": "device-123", "pause_error": None},
+        )
         self.assertEqual(
             client._request.call_args_list,
             [
                 call("GET", "/me/player"),
                 call("PUT", "/me/player/pause", params={"device_id": "device-123"}),
             ],
+        )
+
+    def test_pause_error_keeps_snapshot_for_later_restore(self):
+        client = self.make_client()
+        client._request.side_effect = [
+            {"is_playing": True, "device": {"id": "device-123"}},
+            RuntimeError("malformed Spotify pause response"),
+        ]
+
+        snapshot = client.pause_for_command()
+
+        self.assertTrue(snapshot["was_playing"])
+        self.assertEqual(snapshot["device_id"], "device-123")
+        self.assertEqual(snapshot["pause_error"], "malformed Spotify pause response")
+        client.resume_after_command(snapshot)
+        self.assertEqual(
+            client._request.call_args_list[-1],
+            call("PUT", "/me/player/play", params={"device_id": "device-123"}),
         )
 
     def test_pause_for_command_leaves_already_paused_player_alone(self):
