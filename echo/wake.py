@@ -5,6 +5,9 @@ import os
 import re
 from collections import deque
 from pathlib import Path
+from urllib.request import urlretrieve
+
+from .config import app_data_dir
 
 log = logging.getLogger(__name__)
 
@@ -58,11 +61,7 @@ class WakeWordStabilizer:
 
 
 class OpenWakeWordDetector:
-    """Optional openWakeWord streaming detector for a trained custom Echo model.
-
-    A custom model is required because the upstream bundle does not ship an
-    Echo model. Inference stays local; the model file must be supplied locally.
-    """
+    """Streaming openWakeWord detector for a locally supplied Echo ONNX model."""
 
     INFERENCE_BYTES = 1280 * 2  # 80 ms at 16 kHz, mono, int16
 
@@ -70,7 +69,6 @@ class OpenWakeWordDetector:
         configured_path = (model_path or os.environ.get("ECHO_WAKE_MODEL_PATH", "")).strip()
         self.model_path = Path(configured_path).expanduser() if configured_path else None
         self.threshold = float(os.environ.get("ECHO_WAKE_THRESHOLD", "0.50"))
-        self.vad_threshold = float(os.environ.get("ECHO_WAKE_VAD_THRESHOLD", "0.20"))
         self._buffer = bytearray()
         self._scores: deque[float] = deque(maxlen=3)
         self._numpy = None
@@ -85,6 +83,7 @@ class OpenWakeWordDetector:
 
         try:
             import numpy as np
+            import openwakeword
             from openwakeword.model import Model
         except ImportError as exc:
             raise RuntimeError(
@@ -92,18 +91,50 @@ class OpenWakeWordDetector:
                 "Install it with: python -m pip install openwakeword"
             ) from exc
 
+        mel_path, embedding_path = self._ensure_feature_models(openwakeword)
         self._numpy = np
         self.model = Model(
             wakeword_models=[str(self.model_path)],
             inference_framework="onnx",
-            vad_threshold=self.vad_threshold,
+            # WebRTC VAD in Echo gates every candidate, so openWakeWord's
+            # optional Silero VAD is disabled to avoid an extra model download.
+            vad_threshold=0.0,
+            melspec_model_path=str(mel_path),
+            embedding_model_path=str(embedding_path),
         )
         log.info(
-            "Loaded local openWakeWord model %s (threshold=%.2f, vad_threshold=%.2f)",
+            "Loaded local openWakeWord model %s (threshold=%.2f)",
             self.model_path,
             self.threshold,
-            self.vad_threshold,
         )
+
+    @staticmethod
+    def _ensure_feature_models(openwakeword_module) -> tuple[Path, Path]:
+        """Download only the two ONNX feature models required for inference."""
+        target_dir = app_data_dir() / "models" / "openwakeword"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        paths: dict[str, Path] = {}
+
+        for name, metadata in openwakeword_module.FEATURE_MODELS.items():
+            target = target_dir / (Path(metadata["model_path"]).stem + ".onnx")
+            if not target.is_file():
+                url = str(metadata["download_url"]).replace(".tflite", ".onnx")
+                temporary = target.with_suffix(target.suffix + ".download")
+                log.info("Downloading openWakeWord feature model: %s", name)
+                try:
+                    urlretrieve(url, temporary)
+                    if not temporary.is_file() or temporary.stat().st_size == 0:
+                        raise RuntimeError("downloaded model file is empty")
+                    temporary.replace(target)
+                except Exception as exc:
+                    temporary.unlink(missing_ok=True)
+                    raise RuntimeError(
+                        f"Could not download openWakeWord feature model '{name}' from the "
+                        "official release. Check your internet connection and retry."
+                    ) from exc
+            paths[name] = target
+
+        return paths["melspectrogram"], paths["embedding"]
 
     @property
     def enabled(self) -> bool:
