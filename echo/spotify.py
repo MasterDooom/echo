@@ -400,14 +400,25 @@ class SpotifyClient:
             raise SpotifyError(f"Could not reach Spotify: {exc.reason}") from exc
 
     def pause_for_command(self) -> dict[str, Any]:
-        """Pause current playback and return the precise device/state snapshot."""
+        """Capture player state before pausing; preserve it even if pause errors."""
         state = self._request("GET", "/me/player")
         device_id = (state.get("device") or {}).get("id")
-        was_playing = bool(state.get("is_playing"))
-        if was_playing:
+        snapshot: dict[str, Any] = {
+            "was_playing": bool(state.get("is_playing")),
+            "device_id": device_id,
+            "pause_error": None,
+        }
+        if snapshot["was_playing"]:
             params = {"device_id": device_id} if device_id else None
-            self._request("PUT", "/me/player/pause", params=params)
-        return {"was_playing": was_playing, "device_id": device_id}
+            try:
+                self._request("PUT", "/me/player/pause", params=params)
+            except Exception as exc:
+                # A malformed or lost HTTP response does not prove Spotify
+                # stayed playing. Keep the pre-command snapshot so Echo can
+                # still attempt restoration after recognition/command handling.
+                snapshot["pause_error"] = str(exc)
+                log.warning("Spotify pause request failed after state snapshot: %s", exc)
+        return snapshot
 
     def resume_after_command(self, snapshot: dict[str, Any]) -> None:
         if not snapshot or not snapshot.get("was_playing"):
