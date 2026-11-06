@@ -66,7 +66,7 @@ class MicrophonePrivacyTests(unittest.TestCase):
         }
 
         with patch("echo.assistant.WAKE_VERIFY_POSTROLL_FRAMES", 0):
-            accepted, _frames, transcript, _postroll_speech = assistant._verify_wake(
+            accepted, _frames, transcript = assistant._verify_wake(
                 recognizer, [b"seed"]
             )
 
@@ -109,7 +109,7 @@ class MicrophonePrivacyTests(unittest.TestCase):
         }
 
         with patch("echo.assistant.WAKE_VERIFY_POSTROLL_FRAMES", 0):
-            accepted, _frames, _transcript, _postroll_speech = assistant._verify_wake(
+            accepted, _frames, _transcript = assistant._verify_wake(
                 recognizer, [b"seed"]
             )
 
