@@ -13,9 +13,15 @@ log = logging.getLogger(__name__)
 # It is still local and CPU-int8; users can override it in .env.
 MODEL_NAME = os.environ.get("ECHO_STT_MODEL", "small.en").strip() or "small.en"
 INITIAL_PROMPT = (
-    "Indian English speech. A short spoken voice command. "
-    "The speaker may name songs, music artists, albums or personal playlists. "
-    "Transcribe the words that were actually spoken, including the complete title."
+    "This is a short voice command to a music assistant named Echo. "
+    "Spotify commands include play, pause, resume, skip, next, previous, "
+    "add to queue, queue, playlist, shuffle, repeat, volume, mute and seek. "
+    "The speaker uses Indian English and may name songs, artists, albums or playlists. "
+    "Transcribe the complete words and names that were actually spoken."
+)
+HOTWORDS = (
+    "Echo, Spotify, queue, add to queue, playlist, play, pause, resume, "
+    "skip, next track, previous track, shuffle, repeat, volume, mute, seek"
 )
 
 
@@ -92,6 +98,7 @@ class CommandRecognizer:
             beam_size=5,
             patience=1.1,
             initial_prompt=INITIAL_PROMPT,
+            hotwords=HOTWORDS,
             condition_on_previous_text=False,
             temperature=0.0,
             vad_filter=False,
