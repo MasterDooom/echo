@@ -69,7 +69,7 @@ class OpenWakeWordDetector:
     def __init__(self, model_path: str | None = None) -> None:
         configured_path = (model_path or os.environ.get("ECHO_WAKE_MODEL_PATH", "")).strip()
         self.model_path = Path(configured_path).expanduser() if configured_path else None
-        self.threshold = float(os.environ.get("ECHO_WAKE_THRESHOLD", "0.65"))
+        self.threshold = float(os.environ.get("ECHO_WAKE_THRESHOLD", "0.50"))
         self.vad_threshold = float(os.environ.get("ECHO_WAKE_VAD_THRESHOLD", "0.20"))
         self._buffer = bytearray()
         self._scores: deque[float] = deque(maxlen=3)
