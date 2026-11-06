@@ -80,7 +80,6 @@ Configure the downloaded file in `.env`:
 ~~~env
 ECHO_WAKE_MODEL_PATH=C:\\Users\\Lenovo\\AppData\\Local\\Echo\\models\\Echo_20260930_221231.onnx
 ECHO_WAKE_THRESHOLD=0.50
-ECHO_WAKE_VAD_THRESHOLD=0.20
 ~~~
 
 A different public model, "Hey Echo", has higher reported recall but requires saying **"Hey Echo"** and has a higher false-activation rate; Echo does not select it by default. The openWakeWord training notebook can be used to fine-tune a wake phrase for your own pronunciation: https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb?usp=sharing
