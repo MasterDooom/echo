@@ -102,7 +102,10 @@ def parse_command(transcript: str) -> Command | None:
     if queue_match:
         title, artist = _split_track_artist(queue_match.group(1))
         return Command("queue", title, artist=artist, target_type="track")
-    queue_match = re.match(r"^(?:queue|cue|add to (?:queue|cue))\s+(.+)$", text)
+    queue_match = re.match(
+        r"^(?:queue|cue|add to (?:(?:my|the)\s+)?(?:queue|cue))\s+(.+)$",
+        text,
+    )
     if queue_match:
         title, artist = _split_track_artist(queue_match.group(1))
         return Command("queue", title, artist=artist, target_type="track")
