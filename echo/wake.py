@@ -8,30 +8,30 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# The fallback recognizer is deliberately limited to the two most plausible
-# spellings of the user's AY-koh pronunciation. The independent Whisper
-# verification stage only accepts the canonical "Echo" spelling at the start
-# of the utterance.
+# Keep spelling tolerance narrow and require the wake phrase at the beginning.
+# Vosk/Whisper may render the spoken AY-koh as "Echo", "ayko" or "aiko".
 _CANDIDATE_PREFIX = re.compile(
-    r"^(?:hey\\s+)?(?:echo|ayko|aiko)(?=\\s|$)",
+    r"^(?:hey\s+)?(?:echo|ayko|aiko)(?=\s|$)",
     re.IGNORECASE,
 )
 _CONFIRMED_PREFIX = re.compile(
-    r"^(?:hey\\s+)?echo(?=\\s|$)",
+    r"^(?:hey\s+)?(?:echo|ayko|aiko)(?=\s|$)",
     re.IGNORECASE,
 )
+
+
+def _normalize_wake_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
 
 def wake_candidate_detected(text: str) -> bool:
     """Recognize a candidate only when the wake name starts the utterance."""
-    normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
-    return bool(_CANDIDATE_PREFIX.match(normalized))
+    return bool(_CANDIDATE_PREFIX.match(_normalize_wake_text(text)))
 
 
 def wake_word_detected(text: str) -> bool:
-    """Accept only a canonical Echo wake phrase at the beginning of a transcript."""
-    normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
-    return bool(_CONFIRMED_PREFIX.match(normalized))
+    """Accept only a narrow wake spelling at the beginning of a transcript."""
+    return bool(_CONFIRMED_PREFIX.match(_normalize_wake_text(text)))
 
 
 class WakeWordStabilizer:
@@ -64,8 +64,7 @@ class OpenWakeWordDetector:
     Echo model. Inference stays local; the model file must be supplied locally.
     """
 
-    FRAME_BYTES = 160 * 2  # 10 ms, 16 kHz, mono int16
-    INFERENCE_BYTES = 1280 * 2  # 80 ms is the recommended efficient batch
+    INFERENCE_BYTES = 1280 * 2  # 80 ms at 16 kHz, mono, int16
 
     def __init__(self, model_path: str | None = None) -> None:
         configured_path = (model_path or os.environ.get("ECHO_WAKE_MODEL_PATH", "")).strip()
@@ -117,7 +116,7 @@ class OpenWakeWordDetector:
             self.model.reset()
 
     def process(self, pcm16: bytes) -> tuple[bool, float] | None:
-        """Feed one 10 ms PCM frame; return only when an 80 ms score is ready."""
+        """Feed 10 ms mic frames; return after each 80 ms model inference batch."""
         if self.model is None:
             return None
         self._buffer.extend(pcm16)
@@ -131,8 +130,7 @@ class OpenWakeWordDetector:
         score = max((float(value) for value in predictions.values()), default=0.0)
         self._scores.append(score)
 
-        # A single short spike must not wake Echo. Require two of the last
-        # three model scores to clear the configured threshold.
+        # Require two of the last three scores to clear the threshold.
         hits = sum(value >= self.threshold for value in self._scores)
         detected = len(self._scores) == self._scores.maxlen and hits >= 2
         return detected, score
