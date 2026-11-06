@@ -21,6 +21,57 @@ class SpotifyFeatureTests(unittest.TestCase):
         client.playlist_cache_file = Path(tempfile.gettempdir()) / "echo-test-playlists-cache.json"
         return client
 
+    def test_play_track_reports_success_only_after_player_confirms_requested_track(self):
+        from unittest.mock import patch
+
+        client = self.make_client()
+        track = {
+            "id": "weeknd-id",
+            "uri": "spotify:track:weeknd-id",
+            "name": "Blinding Lights",
+            "artists": [{"name": "The Weeknd"}],
+        }
+        client.search_track = Mock(return_value=track)
+        client.get_playback_state = Mock(return_value={
+            "is_playing": True,
+            "item": {"id": "weeknd-id", "uri": "spotify:track:weeknd-id"},
+            "device": {"name": "Desktop"},
+        })
+
+        with patch("echo.spotify.time.sleep"):
+            result = client._play_track("blinding lights", "the weeknd", "device-123")
+
+        self.assertEqual(result, "Playing Blinding Lights — The Weeknd")
+        client._request.assert_called_once_with(
+            "PUT",
+            "/me/player/play",
+            params={"device_id": "device-123"},
+            body={"uris": ["spotify:track:weeknd-id"]},
+        )
+
+    def test_play_track_does_not_claim_success_when_player_remains_idle(self):
+        from unittest.mock import patch
+        from echo.spotify import SpotifyError
+
+        client = self.make_client()
+        client.search_track = Mock(return_value={
+            "id": "weeknd-id",
+            "uri": "spotify:track:weeknd-id",
+            "name": "Blinding Lights",
+            "artists": [{"name": "The Weeknd"}],
+        })
+        client.get_playback_state = Mock(return_value={
+            "is_playing": False,
+            "item": None,
+            "device": {"name": "Desktop"},
+        })
+
+        with patch("echo.spotify.time.sleep"):
+            with self.assertRaisesRegex(SpotifyError, "playback was not confirmed"):
+                client._play_track("blinding lights", "the weeknd", "device-123")
+
+        self.assertEqual(client.get_playback_state.call_count, 6)
+
     def test_queue_track_uses_official_queue_endpoint_and_active_device(self):
         client = self.make_client()
         client.search_track = Mock(return_value={
