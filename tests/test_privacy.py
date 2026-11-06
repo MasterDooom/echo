@@ -1,5 +1,6 @@
 import importlib
 import queue
+from collections import deque
 import sys
 import types
 import unittest
@@ -53,6 +54,31 @@ class MicrophonePrivacyTests(unittest.TestCase):
         assistant._release_microphone()
         self.assertIsNone(assistant.microphone)
 
+    def test_speech_preroll_drops_old_noise_but_keeps_onset_padding(self):
+        history = deque(
+            [(b"noise", False)] * 40
+            + [(b"lead", False)] * 5
+            + [(b"speech", True)] * 10
+        )
+
+        frames = self.assistant_class._speech_preroll(
+            history, padding_frames=3
+        )
+
+        self.assertEqual(
+            frames,
+            [b"lead", b"lead", b"lead", b"speech", b"speech", b"speech",
+             b"speech", b"speech", b"speech", b"speech", b"speech", b"speech", b"speech"],
+        )
+        self.assertNotIn(b"noise", frames)
+
+    def test_speech_preroll_handles_no_vad_activity(self):
+        history = deque([(b"one", False), (b"two", False), (b"three", False)])
+        self.assertEqual(
+            self.assistant_class._speech_preroll(history, padding_frames=2),
+            [b"two", b"three"],
+        )
+
     def test_wake_verification_rejects_echo_mentioned_mid_sentence(self):
         from unittest.mock import Mock, patch
 
@@ -66,7 +92,7 @@ class MicrophonePrivacyTests(unittest.TestCase):
         }
 
         with patch("echo.assistant.WAKE_VERIFY_POSTROLL_FRAMES", 0):
-            accepted, _frames, transcript = assistant._verify_wake(
+            accepted, _frames, transcript, _postroll_speech = assistant._verify_wake(
                 recognizer, [b"seed"]
             )
 
@@ -109,7 +135,7 @@ class MicrophonePrivacyTests(unittest.TestCase):
         }
 
         with patch("echo.assistant.WAKE_VERIFY_POSTROLL_FRAMES", 0):
-            accepted, _frames, _transcript = assistant._verify_wake(
+            accepted, _frames, _transcript, _postroll_speech = assistant._verify_wake(
                 recognizer, [b"seed"]
             )
 
