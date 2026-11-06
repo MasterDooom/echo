@@ -71,22 +71,23 @@ python -m echo --download-model
 
 The default setup uses Vosk only to propose a wake candidate. WebRTC VAD gates it, consecutive detections are smoothed, and an unbiased local Whisper pass must confirm a wake phrase at the beginning of the utterance before Spotify is paused. Ordinary mentions of "echo" later in a sentence are rejected.
 
-For a dedicated streaming keyword spotter, Echo supports a custom openWakeWord ONNX model. The repository does **not** ship a trained "Echo" model: openWakeWord's included models do not provide this exact wake phrase, and custom training requires generated positive speech examples plus substantial negative speech/noise/music data. Its official training notebook is here:
+For a dedicated streaming keyword spotter, Echo supports openWakeWord. A public model for the exact phrase **"Echo"** is available in the [openWakeWord model library](https://openwakeword.com/library/4929). Sign in there, download the ONNX file `Echo_20260930_221231.onnx`, and place it under `%LOCALAPPDATA%\\Echo\\models`.
 
-https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb?usp=sharing
+Published benchmark results for that model are modest: 55.2% recall in clean speech, 38.8% with background noise/room reverb, and 0.65 false activations per hour at threshold 0.5. Echo uses score smoothing, VAD and independent local Whisper confirmation on top of the detector. These checks reduce false triggers but cannot recover a wake phrase missed by the model.
 
-After training and saving an ONNX model locally, add its path to the .env file:
+Configure the downloaded file in `.env`:
 
 ~~~env
-ECHO_WAKE_MODEL_PATH=C:\Users\Lenovo\AppData\Local\Echo\models\echo.onnx
-ECHO_WAKE_THRESHOLD=0.65
+ECHO_WAKE_MODEL_PATH=C:\\Users\\Lenovo\\AppData\\Local\\Echo\\models\\Echo_20260930_221231.onnx
+ECHO_WAKE_THRESHOLD=0.50
 ECHO_WAKE_VAD_THRESHOLD=0.20
 ~~~
 
-When this path is valid, Echo loads openWakeWord for streaming candidate detection and still runs the local Whisper verifier before touching playback. Without the path, Echo safely falls back to Vosk candidate detection plus Whisper verification.
+A different public model, "Hey Echo", has higher reported recall but requires saying **"Hey Echo"** and has a higher false-activation rate; Echo does not select it by default. The openWakeWord training notebook can be used to fine-tune a wake phrase for your own pronunciation: https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb?usp=sharing
 
-Porcupine was researched but not selected as the default because custom wake words require a Picovoice AccessKey and a .ppn model, and Picovoice does not offer a dedicated personal/non-commercial plan. The openWakeWord source code is Apache-2.0; its bundled pretrained model files are CC BY-NC-SA 4.0, so review model-asset licensing before commercial distribution.
+The ONNX model must be downloaded manually because the library requires sign-in. It is licensed for personal and non-commercial use by default. The openWakeWord source code is Apache-2.0; review model-asset licensing before commercial distribution.
 
+Porcupine was also evaluated but not selected as the default: custom wake words require a Picovoice AccessKey and a `.ppn` model, and Picovoice says it has no dedicated personal/non-commercial plan.
 The Vosk wake-word model and Whisper small.en model are downloaded once and stored under %LOCALAPPDATA%\Echo\models. Speech recognition runs locally after the downloads complete.
 
 To verify the microphone transcription separately from Spotify, pause Spotify and run:
@@ -103,7 +104,7 @@ python -m echo --test-wake
 
 The wake diagnostic listens for 60 seconds, reports accepted and rejected candidates, saves no audio and never sends microphone data to cloud services. Speak normally for a few seconds, then say "Echo, play Starboy".
 
-This records one short utterance in RAM only, then prints the local transcript, parsed intent and audio-level diagnostics. It does not save or upload the recording. If the transcript is wrong, the issue is microphone capture or speech recognition; if the transcript is right but the intent is wrong, the issue is command parsing.
+The speech diagnostic records one short utterance in RAM only, then prints the local transcript, parsed intent and audio-level diagnostics. It does not save or upload the recording. If the transcript is wrong, the issue is microphone capture or speech recognition; if the transcript is right but the intent is wrong, the issue is command parsing.
 
 ## Start Echo
 
