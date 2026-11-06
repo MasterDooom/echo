@@ -570,18 +570,37 @@ class SpotifyClient:
         params = self._target_params(device_id)
         target_device_id = (params or {}).get("device_id")
         label = _track_label(track)
+        track_uri = str(track.get("uri") or "")
+        album_uri = str((track.get("album") or {}).get("uri") or "")
+
+        # Spotify desktop clients have a current Web API regression: a bare
+        # {"uris": [track_uri]} request can return 204 yet leave the player
+        # empty. Starting the album context at the requested track works around
+        # it while keeping the exact selected track as the first item.
+        if album_uri and track_uri:
+            play_body = {
+                "context_uri": album_uri,
+                "offset": {"uri": track_uri},
+            }
+            play_mode = "album_context"
+        else:
+            play_body = {"uris": [track_uri]}
+            play_mode = "track_uri_fallback"
+
         log.info(
-            "Starting Spotify track=%r uri=%r device_id=%r",
+            "Starting Spotify track=%r uri=%r album_uri=%r mode=%s device_id=%r",
             label,
-            track.get("uri"),
+            track_uri,
+            album_uri or None,
+            play_mode,
             target_device_id,
         )
-        self._request("PUT", "/me/player/play", params=params, body={"uris": [track["uri"]]})
+        self._request("PUT", "/me/player/play", params=params, body=play_body)
 
         # Spotify's 204 response only acknowledges the command. Confirm the
         # player actually switched to the requested track before reporting success.
         requested_id = str(track.get("id") or "")
-        requested_uri = str(track.get("uri") or "")
+        requested_uri = track_uri
         last_state: dict[str, Any] = {}
         for attempt in range(6):
             time.sleep(0.5)
@@ -589,9 +608,12 @@ class SpotifyClient:
             item = last_state.get("item") or {}
             actual_id = str(item.get("id") or "")
             actual_uri = str(item.get("uri") or "")
+            linked_from = item.get("linked_from") or {}
             same_track = (
                 bool(requested_uri and actual_uri == requested_uri)
                 or bool(requested_id and actual_id == requested_id)
+                or bool(requested_uri and str(linked_from.get("uri") or "") == requested_uri)
+                or bool(requested_id and str(linked_from.get("id") or "") == requested_id)
             )
             log.info(
                 "Spotify playback verification attempt=%d is_playing=%r item=%r uri=%r device=%r",
@@ -610,7 +632,8 @@ class SpotifyClient:
         raise SpotifyError(
             f"Spotify accepted the request for {label}, but playback was not confirmed. "
             f"Player state: {current_label}; device: {device_name}; "
-            f"is_playing={last_state.get('is_playing')!r}. Check Spotify's device and account restrictions."
+            f"is_playing={last_state.get('is_playing')!r}. "
+            "The Spotify desktop app may be rejecting the track-only playback request."
         )
 
     def _play_playlist(
