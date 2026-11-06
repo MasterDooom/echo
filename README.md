@@ -71,14 +71,14 @@ python -m echo --download-model
 
 The default setup uses Vosk only to propose a wake candidate. WebRTC VAD gates it, consecutive detections are smoothed, and an unbiased local Whisper pass must confirm a wake phrase at the beginning of the utterance before Spotify is paused. Ordinary mentions of "echo" later in a sentence are rejected.
 
-For a dedicated streaming keyword spotter, Echo supports openWakeWord. A public model for the exact phrase **"Echo"** is available in the [openWakeWord model library](https://openwakeword.com/library/4929). Sign in there, download the ONNX file `Echo_20260930_221231.onnx`, and place it under `%LOCALAPPDATA%\\Echo\\models`.
+For a dedicated streaming keyword spotter, Echo supports openWakeWord. A public model for the exact phrase **"Echo"** is available in the [openWakeWord model library](https://openwakeword.com/library/4929). Sign in there, download the ONNX file `Echo_20260930_221231.onnx`, and place it under `%LOCALAPPDATA%\Echo\models`.
 
 Published benchmark results for that model are modest: 55.2% recall in clean speech, 38.8% with background noise/room reverb, and 0.65 false activations per hour at threshold 0.5. Echo uses score smoothing, VAD and independent local Whisper confirmation on top of the detector. These checks reduce false triggers but cannot recover a wake phrase missed by the model.
 
 Configure the downloaded file in `.env`:
 
 ~~~env
-ECHO_WAKE_MODEL_PATH=%LOCALAPPDATA%\\Echo\\models\\Echo_20260930_221231.onnx
+ECHO_WAKE_MODEL_PATH=%LOCALAPPDATA%\Echo\models\Echo_20260930_221231.onnx
 ECHO_WAKE_THRESHOLD=0.50
 ~~~
 
