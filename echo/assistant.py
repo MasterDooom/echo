@@ -115,11 +115,12 @@ class EchoAssistant(threading.Thread):
         avg_logprob = float(diagnostics.get("avg_logprob", -10.0))
         no_speech = float(diagnostics.get("no_speech_probability", 1.0))
         normalized = re.sub(r"[^a-z0-9]+", " ", transcript.lower()).strip()
-        bare_wake = normalized in {"echo", "hey echo"}
-        recognized_command = parse_command(transcript) is not None
+        bare_wake = normalized in {"echo", "hey echo", "ayko", "aiko", "hey ayko", "hey aiko"}
+        # Wake verification must not depend on successful command parsing.
+        # A real wake followed by a misunderstood command still deserves a
+        # listening window; command failure must never become a false wake.
         verified = (
             wake_word_detected(transcript)
-            and (bare_wake or recognized_command)
             and avg_logprob >= -1.0
             and no_speech <= 0.65
         )
@@ -302,7 +303,16 @@ class EchoAssistant(threading.Thread):
                         log.warning("Could not pause Spotify before command capture: %s", exc)
                         self.emit("message", f"Spotify pause failed: {exc}")
 
-                    frames = self._capture_command(verification_frames)
+                    command_started_with_wake = not bare_wake
+                    # The first second of the wake candidate may contain
+                    # Spotify audio. Keep only the post-candidate tail for
+                    # command transcription; it also preserves the first
+                    # syllable if the user speaks straight through.
+                    command_seed = verification_frames[-WAKE_VERIFY_POSTROLL_FRAMES:]
+                    frames = self._capture_command(
+                        command_seed,
+                        command_already_started=command_started_with_wake,
+                    )
                     if not frames:
                         self.emit("message", "I heard Echo, but no command followed.")
                     else:
@@ -365,28 +375,23 @@ class EchoAssistant(threading.Thread):
             except Exception:
                 log.exception("Could not close microphone")
 
-    def _capture_command(self, pre_roll: list[bytes]) -> list[bytes]:
+    def _capture_command(
+        self,
+        pre_roll: list[bytes],
+        *,
+        command_already_started: bool = False,
+    ) -> list[bytes]:
         """Capture a command after verified wake detection and optional Spotify pause."""
         assert self.microphone is not None
         frames = list(pre_roll)
-        speech_started = False
+        # A bare "Echo" starts the Alexa-style command window but is not itself
+        # the command. A continuous "Echo, play ..." utterance is already in
+        # progress and must not be clipped.
+        speech_started = command_already_started
         trailing_silence = 0
         started_at = time.monotonic()
         deadline = started_at + COMMAND_WINDOW_SECONDS
 
-        # Verification audio may already contain the whole command (the user
-        # often says "Echo, play ..." without pausing between the two parts).
-        # Count speech in that pre-roll so the endpoint detector can finish it.
-        for raw in frames[-PRE_ROLL_FRAMES:]:
-            samples = self.microphone._numpy.frombuffer(
-                raw, dtype=self.microphone._numpy.int16
-            ).astype(self.microphone._numpy.float32)
-            rms = float(self.microphone._numpy.sqrt(
-                self.microphone._numpy.mean(samples * samples)
-            )) / 32768.0
-            if rms >= WAKE_RMS_FALLBACK:
-                speech_started = True
-                break
 
         while (
             not self.shutdown.is_set()
