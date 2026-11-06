@@ -66,7 +66,9 @@ class OpenWakeWordDetector:
     INFERENCE_BYTES = 1280 * 2  # 80 ms at 16 kHz, mono, int16
 
     def __init__(self, model_path: str | None = None) -> None:
-        configured_path = (model_path or os.environ.get("ECHO_WAKE_MODEL_PATH", "")).strip()
+        configured_path = os.path.expandvars(
+            (model_path or os.environ.get("ECHO_WAKE_MODEL_PATH", "")).strip()
+        )
         self.model_path = Path(configured_path).expanduser() if configured_path else None
         self.threshold = float(os.environ.get("ECHO_WAKE_THRESHOLD", "0.50"))
         self._buffer = bytearray()
