@@ -96,13 +96,13 @@ def parse_command(transcript: str) -> Command | None:
 
     # Queue additions must win over generic play/media parsing.
     queue_match = re.match(
-        r"^(?:add|put|place)\s+(.+?)\s+(?:to|in|into|on)\s+(?:(?:my|the)\s+)?queue$",
+        r"^(?:add|put|place)\s+(.+?)\s+(?:to|in|into|on)\s+(?:(?:my|the)\s+)?(?:queue|cue)$",
         text,
     )
     if queue_match:
         title, artist = _split_track_artist(queue_match.group(1))
         return Command("queue", title, artist=artist, target_type="track")
-    queue_match = re.match(r"^(?:queue|add to queue)\s+(.+)$", text)
+    queue_match = re.match(r"^(?:queue|cue|add to (?:queue|cue))\s+(.+)$", text)
     if queue_match:
         title, artist = _split_track_artist(queue_match.group(1))
         return Command("queue", title, artist=artist, target_type="track")
