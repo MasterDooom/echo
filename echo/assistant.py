@@ -27,17 +27,17 @@ log = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 160
 PRE_ROLL_FRAMES = 100  # 1 second; protects the first syllables after "Echo".
-WAKE_GRAMMAR = json.dumps(["echo", "ayko", "aiko", "hey echo"])
+WAKE_GRAMMAR = json.dumps(["echo", "ayko", "aiko", "hey echo", "[unk]"])
 
-COMMAND_WINDOW_SECONDS = 8.0
+COMMAND_WINDOW_SECONDS = 10.0
 MIN_CAPTURE_SECONDS = 0.55
-NO_COMMAND_WAIT_SECONDS = 2.5
+NO_COMMAND_WAIT_SECONDS = 4.0
 VAD_THRESHOLD = 0.20
 WAKE_RMS_FALLBACK = 0.006
 WAKE_VERIFY_POSTROLL_FRAMES = 45  # 450 ms after a candidate, before Spotify is touched.
 WAKE_REJECT_COOLDOWN_SECONDS = 1.25
 WAKE_REQUIRED_HITS = 4
-END_SILENCE_FRAMES = 80  # 800 ms, so quiet final words are not clipped.
+END_SILENCE_FRAMES = 90  # 900 ms, so a natural pause does not clip the final word.
 
 
 class EchoAssistant(threading.Thread):
@@ -328,12 +328,18 @@ class EchoAssistant(threading.Thread):
                             transcript,
                             command_recognizer.last_diagnostics,
                         )
-                        command = parse_command(transcript)
-                        if command is None:
-                            detail = (
-                                f"I heard: {transcript[:90]}"
-                                if transcript else "I didn't catch the command"
+                        diagnostics = command_recognizer.last_diagnostics
+                        avg_logprob = float(diagnostics.get("avg_logprob", -10.0))
+                        no_speech = float(diagnostics.get("no_speech_probability", 1.0))
+                        confidence_ok = bool(transcript) and avg_logprob >= -1.0 and no_speech <= 0.65
+                        command = parse_command(transcript) if confidence_ok else None
+                        if not confidence_ok:
+                            self.emit(
+                                "message",
+                                "I didn't catch that clearly · Spotify will resume. Please repeat.",
                             )
+                        elif command is None:
+                            detail = f"I heard: {transcript[:90]}" if transcript else "I didn't catch the command"
                             self.emit("message", f"{detail} · Spotify will resume")
                         elif command.kind == "pause":
                             # Spotify was paused before capture; this is an
