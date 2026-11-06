@@ -98,32 +98,17 @@ class EchoAssistant(threading.Thread):
         self,
         recognizer: CommandRecognizer,
         seed_frames: list[bytes],
-    ) -> tuple[bool, list[bytes], str, bool]:
+    ) -> tuple[bool, list[bytes], str]:
         """Verify a candidate with unbiased local Whisper before pausing Spotify."""
         assert self.microphone is not None
         frames = list(seed_frames)
-        postroll_speech = False
-        postroll_activity: deque[bool] = deque(maxlen=25)
         for _ in range(WAKE_VERIFY_POSTROLL_FRAMES):
             if self.shutdown.is_set() or self.paused.is_set():
-                return False, frames, "", False
+                return False, frames, ""
             pair = self.microphone.read_pair(timeout=0.15)
             if pair is not None:
-                processed, original = pair
+                _processed, original = pair
                 frames.append(original)
-                samples = self.microphone._numpy.frombuffer(
-                    processed, dtype=self.microphone._numpy.int16
-                ).astype(self.microphone._numpy.float32)
-                rms = float(self.microphone._numpy.sqrt(
-                    self.microphone._numpy.mean(samples * samples)
-                )) / 32768.0
-                probability = float(self.microphone.speech_probability)
-                postroll_activity.append(
-                    probability >= VAD_THRESHOLD
-                    or (probability >= 0.08 and rms >= WAKE_RMS_FALLBACK)
-                )
-
-        postroll_speech = sum(postroll_activity) >= 3
         transcript = recognizer.transcribe_frames(frames, context_bias=False)
         diagnostics = recognizer.last_diagnostics
         avg_logprob = float(diagnostics.get("avg_logprob", -10.0))
@@ -145,7 +130,7 @@ class EchoAssistant(threading.Thread):
             no_speech,
             len(frames),
         )
-        return verified, frames, transcript, postroll_speech
+        return verified, frames, transcript
 
     def _restore_playback(self, spotify: SpotifyClient, snapshot: dict[str, Any]) -> None:
         if not snapshot or not snapshot.get("was_playing"):
@@ -281,7 +266,7 @@ class EchoAssistant(threading.Thread):
                 )
                 wake_stabilizer.reset()
                 seed = list(history)
-                verified, verification_frames, verification_text, postroll_speech = self._verify_wake(
+                verified, verification_frames, verification_text = self._verify_wake(
                     command_recognizer, seed
                 )
                 history.clear()
@@ -322,7 +307,7 @@ class EchoAssistant(threading.Thread):
                         log.warning("Could not pause Spotify before command capture: %s", exc)
                         self.emit("message", f"Spotify pause failed: {exc}")
 
-                    command_started_with_wake = not bare_wake or postroll_speech
+                    command_started_with_wake = not bare_wake
                     # The first second of the wake candidate may contain
                     # Spotify audio. Keep only the post-candidate tail for
                     # command transcription; it also preserves the first
