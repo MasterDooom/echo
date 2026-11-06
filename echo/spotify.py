@@ -568,8 +568,50 @@ class SpotifyClient:
     def _play_track(self, query: str, artist: str = "", device_id: str | None = None) -> str:
         track = self.search_track(query, artist)
         params = self._target_params(device_id)
+        target_device_id = (params or {}).get("device_id")
+        label = _track_label(track)
+        log.info(
+            "Starting Spotify track=%r uri=%r device_id=%r",
+            label,
+            track.get("uri"),
+            target_device_id,
+        )
         self._request("PUT", "/me/player/play", params=params, body={"uris": [track["uri"]]})
-        return f"Playing {_track_label(track)}"
+
+        # Spotify's 204 response only acknowledges the command. Confirm the
+        # player actually switched to the requested track before reporting success.
+        requested_id = str(track.get("id") or "")
+        requested_uri = str(track.get("uri") or "")
+        last_state: dict[str, Any] = {}
+        for attempt in range(6):
+            time.sleep(0.5)
+            last_state = self.get_playback_state()
+            item = last_state.get("item") or {}
+            actual_id = str(item.get("id") or "")
+            actual_uri = str(item.get("uri") or "")
+            same_track = (
+                bool(requested_uri and actual_uri == requested_uri)
+                or bool(requested_id and actual_id == requested_id)
+            )
+            log.info(
+                "Spotify playback verification attempt=%d is_playing=%r item=%r uri=%r device=%r",
+                attempt + 1,
+                last_state.get("is_playing"),
+                item.get("name"),
+                actual_uri,
+                (last_state.get("device") or {}).get("name"),
+            )
+            if last_state.get("is_playing") is True and same_track:
+                return f"Playing {label}"
+
+        item = last_state.get("item") or {}
+        current_label = _track_label(item) if item else "no current track"
+        device_name = (last_state.get("device") or {}).get("name") or "no active device"
+        raise SpotifyError(
+            f"Spotify accepted the request for {label}, but playback was not confirmed. "
+            f"Player state: {current_label}; device: {device_name}; "
+            f"is_playing={last_state.get('is_playing')!r}. Check Spotify's device and account restrictions."
+        )
 
     def _play_playlist(
         self,
