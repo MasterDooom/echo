@@ -53,6 +53,68 @@ class MicrophonePrivacyTests(unittest.TestCase):
         assistant._release_microphone()
         self.assertIsNone(assistant.microphone)
 
+    def test_wake_verification_rejects_echo_mentioned_mid_sentence(self):
+        from unittest.mock import Mock, patch
+
+        assistant = self.assistant_class(queue.Queue())
+        assistant.microphone = Mock()
+        recognizer = Mock()
+        recognizer.transcribe_frames.return_value = "I heard an echo"
+        recognizer.last_diagnostics = {
+            "avg_logprob": -0.2,
+            "no_speech_probability": 0.1,
+        }
+
+        with patch("echo.assistant.WAKE_VERIFY_POSTROLL_FRAMES", 0):
+            accepted, _frames, transcript = assistant._verify_wake(
+                recognizer, [b"seed"]
+            )
+
+        self.assertFalse(accepted)
+        self.assertEqual(transcript, "I heard an echo")
+        recognizer.transcribe_frames.assert_called_once_with(
+            [b"seed"], context_bias=False
+        )
+
+    def test_wake_verification_accepts_wake_plus_valid_command(self):
+        from unittest.mock import Mock, patch
+
+        assistant = self.assistant_class(queue.Queue())
+        assistant.microphone = Mock()
+        recognizer = Mock()
+        recognizer.transcribe_frames.return_value = "Echo, play Starboy"
+        recognizer.last_diagnostics = {
+            "avg_logprob": -0.25,
+            "no_speech_probability": 0.05,
+        }
+
+        with patch("echo.assistant.WAKE_VERIFY_POSTROLL_FRAMES", 0):
+            accepted, _frames, transcript = assistant._verify_wake(
+                recognizer, [b"seed"]
+            )
+
+        self.assertTrue(accepted)
+        self.assertEqual(transcript, "Echo, play Starboy")
+
+    def test_wake_verification_accepts_the_bare_wake_name(self):
+        from unittest.mock import Mock, patch
+
+        assistant = self.assistant_class(queue.Queue())
+        assistant.microphone = Mock()
+        recognizer = Mock()
+        recognizer.transcribe_frames.return_value = "Echo"
+        recognizer.last_diagnostics = {
+            "avg_logprob": -0.3,
+            "no_speech_probability": 0.05,
+        }
+
+        with patch("echo.assistant.WAKE_VERIFY_POSTROLL_FRAMES", 0):
+            accepted, _frames, _transcript = assistant._verify_wake(
+                recognizer, [b"seed"]
+            )
+
+        self.assertTrue(accepted)
+
 
 if __name__ == "__main__":
     unittest.main()
