@@ -26,7 +26,8 @@ from .wake import (
 log = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 160
-PRE_ROLL_FRAMES = 100  # 1 second; protects the first syllables after "Echo".
+PRE_ROLL_FRAMES = 100  # 1 second of labeled speech/audio history.
+PRE_ROLL_PADDING_FRAMES = 25  # Keep 250 ms before the detected speech onset.
 WAKE_GRAMMAR = json.dumps(["echo", "ayko", "aiko", "hey echo", "[unk]"])
 
 COMMAND_WINDOW_SECONDS = 10.0
@@ -95,21 +96,63 @@ class EchoAssistant(threading.Thread):
         )
         return active, probability, rms
 
+    @staticmethod
+    def _speech_preroll(
+        history: deque[tuple[bytes, bool]],
+        *,
+        padding_frames: int = PRE_ROLL_PADDING_FRAMES,
+    ) -> list[bytes]:
+        """Keep the latest speech run plus a short lead-in, dropping old music."""
+        items = list(history)
+        last_speech = next(
+            (index for index in range(len(items) - 1, -1, -1) if items[index][1]),
+            None,
+        )
+        if last_speech is None:
+            return [frame for frame, _active in items[-padding_frames:]]
+
+        start = last_speech
+        quiet_gap = 0
+        for index in range(last_speech - 1, -1, -1):
+            if items[index][1]:
+                start = index
+                quiet_gap = 0
+            else:
+                quiet_gap += 1
+                start = index
+                if quiet_gap > 20:
+                    break
+        start = max(0, start - padding_frames)
+        return [frame for frame, _active in items[start:]]
+
     def _verify_wake(
         self,
         recognizer: CommandRecognizer,
         seed_frames: list[bytes],
-    ) -> tuple[bool, list[bytes], str]:
+    ) -> tuple[bool, list[bytes], str, bool]:
         """Verify a candidate with unbiased local Whisper before pausing Spotify."""
         assert self.microphone is not None
         frames = list(seed_frames)
+        postroll_activity: deque[bool] = deque(maxlen=25)
         for _ in range(WAKE_VERIFY_POSTROLL_FRAMES):
             if self.shutdown.is_set() or self.paused.is_set():
                 return False, frames, ""
             pair = self.microphone.read_pair(timeout=0.15)
             if pair is not None:
-                _processed, original = pair
+                processed, original = pair
                 frames.append(original)
+                samples = self.microphone._numpy.frombuffer(
+                    processed, dtype=self.microphone._numpy.int16
+                ).astype(self.microphone._numpy.float32)
+                rms = float(self.microphone._numpy.sqrt(
+                    self.microphone._numpy.mean(samples * samples)
+                )) / 32768.0
+                probability = float(self.microphone.speech_probability)
+                postroll_activity.append(
+                    probability >= VAD_THRESHOLD
+                    or (probability >= 0.08 and rms >= WAKE_RMS_FALLBACK)
+                )
+        postroll_speech = sum(postroll_activity) >= 4
         transcript = recognizer.transcribe_frames(frames, context_bias=False)
         diagnostics = recognizer.last_diagnostics
         avg_logprob = float(diagnostics.get("avg_logprob", -10.0))
@@ -131,7 +174,7 @@ class EchoAssistant(threading.Thread):
             no_speech,
             len(frames),
         )
-        return verified, frames, transcript
+        return verified, frames, transcript, postroll_speech
 
     def _restore_playback(self, spotify: SpotifyClient, snapshot: dict[str, Any]) -> None:
         if not snapshot or not snapshot.get("was_playing"):
@@ -198,7 +241,7 @@ class EchoAssistant(threading.Thread):
                     "detection with VAD and independent Whisper verification"
                 )
 
-            history: deque[bytes] = deque(maxlen=PRE_ROLL_FRAMES)
+            history: deque[tuple[bytes, bool]] = deque(maxlen=PRE_ROLL_FRAMES)
             wake_vad_history: deque[bool] = deque(maxlen=OPENWAKE_VAD_WINDOW_FRAMES)
             rejected_until = 0.0
             while not self.shutdown.is_set():
@@ -233,11 +276,11 @@ class EchoAssistant(threading.Thread):
                 if pair is None:
                     continue
                 wake_audio, original_audio = pair
-                history.append(original_audio)
 
                 # Always feed the streaming models, but require speech activity
                 # and repeated detections before considering a wake candidate.
                 speech_active, vad_score, frame_rms = self._speech_active(wake_audio)
+                history.append((original_audio, speech_active))
                 wake_vad_history.append(speech_active)
                 if open_wake.enabled:
                     scored = open_wake.process(wake_audio)
@@ -277,8 +320,8 @@ class EchoAssistant(threading.Thread):
                     frame_rms,
                 )
                 wake_stabilizer.reset()
-                seed = list(history)
-                verified, verification_frames, verification_text = self._verify_wake(
+                seed = self._speech_preroll(history)
+                verified, verification_frames, verification_text, postroll_speech = self._verify_wake(
                     command_recognizer, seed
                 )
                 history.clear()
@@ -320,12 +363,11 @@ class EchoAssistant(threading.Thread):
                         log.warning("Could not pause Spotify before command capture: %s", exc)
                         self.emit("message", f"Spotify pause failed: {exc}")
 
-                    command_started_with_wake = not bare_wake
-                    # The first second of the wake candidate may contain
-                    # Spotify audio. Keep only the post-candidate tail for
-                    # command transcription; it also preserves the first
-                    # syllable if the user speaks straight through.
-                    command_seed = verification_frames[-WAKE_VERIFY_POSTROLL_FRAMES:]
+                    command_started_with_wake = not bare_wake or postroll_speech
+                    # Use the VAD-trimmed verifier audio as the initial command
+                    # buffer. This preserves a command spoken continuously
+                    # after "Echo" without including the preceding second of music.
+                    command_seed = verification_frames
                     frames = self._capture_command(
                         command_seed,
                         command_already_started=command_started_with_wake,
