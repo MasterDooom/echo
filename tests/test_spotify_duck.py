@@ -36,6 +36,7 @@ class SpotifyDuckTests(unittest.TestCase):
         client._request.side_effect = [
             {"is_playing": True, "device": {"id": "device-123"}},
             RuntimeError("malformed Spotify pause response"),
+            {},
         ]
 
         snapshot = client.pause_for_command()
