@@ -114,8 +114,6 @@ class EchoAssistant(threading.Thread):
         diagnostics = recognizer.last_diagnostics
         avg_logprob = float(diagnostics.get("avg_logprob", -10.0))
         no_speech = float(diagnostics.get("no_speech_probability", 1.0))
-        normalized = re.sub(r"[^a-z0-9]+", " ", transcript.lower()).strip()
-        bare_wake = normalized in {"echo", "hey echo", "ayko", "aiko", "hey ayko", "hey aiko"}
         # Wake verification must not depend on successful command parsing.
         # A real wake followed by a misunderstood command still deserves a
         # listening window; command failure must never become a false wake.
@@ -283,6 +281,13 @@ class EchoAssistant(threading.Thread):
                     if self.microphone is not None:
                         self.microphone.clear()
                     continue
+
+                normalized_wake_text = re.sub(
+                    r"[^a-z0-9]+", " ", verification_text.lower()
+                ).strip()
+                bare_wake = normalized_wake_text in {
+                    "echo", "hey echo", "ayko", "aiko", "hey ayko", "hey aiko"
+                }
 
                 self.emit("status", "awake")
                 playback_snapshot: dict[str, Any] = {
