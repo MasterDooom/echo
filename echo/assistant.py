@@ -111,17 +111,12 @@ class EchoAssistant(threading.Thread):
         if last_speech is None:
             return [frame for frame, _active in items[-padding_frames:]]
 
+        # Walk back only across the contiguous speech run. Do not keep
+        # hundreds of milliseconds of music/noise merely because it is VAD
+        # negative; add a fixed lead-in so initial consonants remain intact.
         start = last_speech
-        quiet_gap = 0
-        for index in range(last_speech - 1, -1, -1):
-            if items[index][1]:
-                start = index
-                quiet_gap = 0
-            else:
-                quiet_gap += 1
-                start = index
-                if quiet_gap > 20:
-                    break
+        while start > 0 and items[start - 1][1]:
+            start -= 1
         start = max(0, start - padding_frames)
         return [frame for frame, _active in items[start:]]
 
