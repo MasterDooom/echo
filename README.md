@@ -6,8 +6,10 @@ Echo is designed to stay in the background as a small orb near the taskbar. Say 
 
 ## What it does
 
-- Vosk runs a constrained wake-word grammar locally while idle.
-- faster-whisper small.en (CPU int8) transcribes only the short command after wake-up; audio is passed to Whisper from the original microphone PCM, not the noise-suppressed wake detector stream.
+- Vosk is used only as a low-cost wake candidate generator until a custom openWakeWord Echo model is configured.
+- A speech gate and temporal stabilizer reject isolated wake candidates; local Whisper independently verifies the wake phrase before Echo is allowed to pause Spotify.
+- faster-whisper small.en (CPU int8) transcribes the command; audio is passed to Whisper from the original microphone PCM, not the noise-suppressed wake detector stream.
+- If the command is empty, unclear or invalid, Echo restores Spotify playback if it paused a previously playing track.
 - A deterministic local intent parser distinguishes playback actions, track requests, playlist requests and queue requests.
 - Spotify search resolves tracks using title, artist and version metadata.
 - Your Spotify playlists are fetched, paginated and cached locally for name matching.
@@ -65,6 +67,26 @@ Spotify playback control and queue insertion require Premium and an available Sp
 python -m echo --download-model
 ~~~
 
+## Wake-word detection
+
+The default setup uses Vosk only to propose a wake candidate. WebRTC VAD gates it, consecutive detections are smoothed, and an unbiased local Whisper pass must confirm a wake phrase at the beginning of the utterance before Spotify is paused. Ordinary mentions of "echo" later in a sentence are rejected.
+
+For a dedicated streaming keyword spotter, Echo supports a custom openWakeWord ONNX model. The repository does **not** ship a trained "Echo" model: openWakeWord's included models do not provide this exact wake phrase, and custom training requires generated positive speech examples plus substantial negative speech/noise/music data. Its official training notebook is here:
+
+https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb?usp=sharing
+
+After training and saving an ONNX model locally, add its path to the .env file:
+
+~~~env
+ECHO_WAKE_MODEL_PATH=C:\Users\Lenovo\AppData\Local\Echo\models\echo.onnx
+ECHO_WAKE_THRESHOLD=0.65
+ECHO_WAKE_VAD_THRESHOLD=0.20
+~~~
+
+When this path is valid, Echo loads openWakeWord for streaming candidate detection and still runs the local Whisper verifier before touching playback. Without the path, Echo safely falls back to Vosk candidate detection plus Whisper verification.
+
+Porcupine was researched but not selected as the default because custom wake words require a Picovoice AccessKey and a .ppn model, and Picovoice does not offer a dedicated personal/non-commercial plan. The openWakeWord source code is Apache-2.0; its bundled pretrained model files are CC BY-NC-SA 4.0, so review model-asset licensing before commercial distribution.
+
 The Vosk wake-word model and Whisper small.en model are downloaded once and stored under %LOCALAPPDATA%\Echo\models. Speech recognition runs locally after the downloads complete.
 
 To verify the microphone transcription separately from Spotify, pause Spotify and run:
@@ -72,6 +94,14 @@ To verify the microphone transcription separately from Spotify, pause Spotify an
 ~~~powershell
 python -m echo --test-speech
 ~~~
+
+To test wake-word candidates and local confirmation without controlling Spotify, run:
+
+~~~powershell
+python -m echo --test-wake
+~~~
+
+The wake diagnostic listens for 60 seconds, reports accepted and rejected candidates, saves no audio and never sends microphone data to cloud services. Speak normally for a few seconds, then say "Echo, play Starboy".
 
 This records one short utterance in RAM only, then prints the local transcript, parsed intent and audio-level diagnostics. It does not save or upload the recording. If the transcript is wrong, the issue is microphone capture or speech recognition; if the transcript is right but the intent is wrong, the issue is command parsing.
 
@@ -164,16 +194,18 @@ While idle:
 
 - PortAudio captures microphone frames locally.
 - WebRTC performs local noise suppression and voice activity detection.
-- Vosk runs a restricted wake-word grammar.
-- Echo does not run general-purpose transcription while waiting.
+- The configured wake backend runs locally. By default, Vosk proposes candidates; optional openWakeWord runs a custom ONNX model.
+- WebRTC VAD gates wake candidates and a temporal stabilizer rejects one-frame spikes.
+- Whisper runs only to verify a candidate and capture a command; it does not run continuously while idle.
 - Audio frames are held briefly in RAM only; they are not recorded to files or sent to cloud speech services.
 
-After wake detection:
+After a wake candidate:
 
-1. Echo pauses Spotify if it was playing.
-2. Whisper transcribes one short command locally.
-3. Echo executes the matching Spotify action.
-4. Playback is restored for queue, skip, volume, repeat, shuffle, seek and read-only commands when playback was active before. Explicit pause remains paused; play/resume starts the requested playback.
+1. Local Whisper verifies that the wake phrase is at the beginning of the utterance.
+2. Only a verified wake is allowed to pause Spotify.
+3. Whisper transcribes the command and the deterministic parser resolves its intent.
+4. If no command follows, transcription is uncertain, parsing fails or Spotify throws an error, playback is restored if it was playing beforehand.
+5. An intentional pause remains paused; a successful play/resume command establishes the new playback state.
 
 **Privacy mode** closes the microphone stream and releases the input device. The orb changes to **MICROPHONE OFF**. Reactivate listening from the orb when ready.
 
