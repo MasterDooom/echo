@@ -10,7 +10,7 @@ from echo.wake import (
 
 class WakeWordTests(unittest.TestCase):
     def test_confirmed_wake_must_be_at_the_start_of_the_transcript(self):
-        for transcript in ("echo", "hey echo", "Echo, play Starboy", "ECHO pause"):
+        for transcript in ("echo", "hey echo", "Echo, play Starboy", "ECHO pause", "ayko play Starboy", "aiko next"):
             with self.subTest(transcript=transcript):
                 self.assertTrue(wake_word_detected(transcript))
 
@@ -20,7 +20,7 @@ class WakeWordTests(unittest.TestCase):
             "there was an echo in the room",
             "echoes",
             "gecko",
-            "aiko",
+            "my friend said ayko yesterday",
         ):
             with self.subTest(transcript=transcript):
                 self.assertFalse(wake_word_detected(transcript))
