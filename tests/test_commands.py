@@ -103,6 +103,18 @@ class CommandParserTests(unittest.TestCase):
                 target_type="track",
             ),
         )
+        self.assertEqual(
+            parse_command("Echo add Starboy to the cue"),
+            Command("queue", "starboy", target_type="track"),
+        )
+        self.assertEqual(
+            parse_command("Echo cue Starboy"),
+            Command("queue", "starboy", target_type="track"),
+        )
+        self.assertEqual(
+            parse_command("Echo add to the cue Starboy"),
+            Command("queue", "starboy", target_type="track"),
+        )
 
     def test_shuffle_and_repeat(self):
         self.assertEqual(parse_command("Echo shuffle"), Command("shuffle", mode="on"))
