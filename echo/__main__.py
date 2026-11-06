@@ -105,6 +105,7 @@ def _diagnose_wake() -> int:
     recognizer.warm()
     microphone = Microphone(sample_rate=sample_rate, frame_length=frame_length)
     history: deque[bytes] = deque(maxlen=100)
+    vad_history: deque[bool] = deque(maxlen=8)
     candidates = 0
     accepted = 0
     rejected = 0
@@ -129,13 +130,16 @@ def _diagnose_wake() -> int:
             rms = float(np.sqrt(np.mean(samples * samples))) / 32768.0
             vad = float(microphone.speech_probability)
             speech_active = vad >= threshold or (vad >= 0.08 and rms >= 0.006)
+            vad_history.append(speech_active)
 
             if open_wake.enabled:
                 scored = open_wake.process(processed)
                 if scored is None:
                     continue
                 raw_candidate, score = scored
-                candidate = raw_candidate and speech_active
+                chunk_speech_active = sum(vad_history) >= 3
+                candidate = raw_candidate and chunk_speech_active
+                stabilizer_speech_active = chunk_speech_active
             else:
                 if wake is None:
                     continue
@@ -145,8 +149,9 @@ def _diagnose_wake() -> int:
                     text = json.loads(wake.PartialResult()).get("partial", "")
                 candidate = wake_candidate_detected(text) and speech_active
                 score = 1.0 if candidate else 0.0
+                stabilizer_speech_active = speech_active
 
-            if not stabilizer.update(candidate, speech_active):
+            if not stabilizer.update(candidate, stabilizer_speech_active):
                 continue
 
             candidates += 1
@@ -175,6 +180,7 @@ def _diagnose_wake() -> int:
 
             stabilizer.reset()
             history.clear()
+            vad_history.clear()
             if wake is not None:
                 wake.Reset()
             open_wake.reset()
