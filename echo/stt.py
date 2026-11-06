@@ -32,6 +32,7 @@ class CommandRecognizer:
         self.model = None
         self.model_name = MODEL_NAME
         self.last_diagnostics: dict[str, float | int | str] = {}
+        self.last_segment_diagnostics: list[dict[str, float | str]] = []
 
     @property
     def download_root(self) -> Path:
@@ -74,11 +75,19 @@ class CommandRecognizer:
         # Use conservative peak-safe normalization. This helps lower-volume
         # laptop microphone input without aggressively boosting room noise.
         target_rms = 0.075
-        gain = min(4.0, target_rms / max(rms, 0.001))
+        # Raise quiet laptop-mic speech more assertively, but cap gain by the
+        # actual peak to avoid clipping consonants and artist/song names.
+        peak_safe_gain = 0.95 / max(peak, 0.001)
+        gain = min(8.0, target_rms / max(rms, 0.001), peak_safe_gain)
         audio = np.clip(audio * gain, -0.98, 0.98).astype(np.float32)
         return audio, rms, peak, len(audio) / 16000.0
 
-    def transcribe_frames(self, frames: Iterable[bytes]) -> str:
+    def transcribe_frames(
+        self,
+        frames: Iterable[bytes],
+        *,
+        context_bias: bool = True,
+    ) -> str:
         prepared = self._prepare_audio(list(frames))
         if prepared is None:
             self.last_diagnostics = {"reason": "audio_too_short_or_quiet"}
@@ -97,8 +106,8 @@ class CommandRecognizer:
             task="transcribe",
             beam_size=5,
             patience=1.1,
-            initial_prompt=INITIAL_PROMPT,
-            hotwords=HOTWORDS,
+            initial_prompt=INITIAL_PROMPT if context_bias else None,
+            hotwords=HOTWORDS if context_bias else None,
             condition_on_previous_text=False,
             temperature=0.0,
             vad_filter=False,
@@ -123,6 +132,15 @@ class CommandRecognizer:
                 accepted.append(text)
 
         transcript = " ".join(accepted).strip()
+        self.last_segment_diagnostics = segment_diagnostics
+        average_logprob = (
+            sum(item["avg_logprob"] for item in segment_diagnostics) / len(segment_diagnostics)
+            if segment_diagnostics else -10.0
+        )
+        no_speech_probability = (
+            sum(item["no_speech_prob"] for item in segment_diagnostics) / len(segment_diagnostics)
+            if segment_diagnostics else 1.0
+        )
         self.last_diagnostics = {
             "model": self.model_name,
             "duration_seconds": round(duration, 2),
@@ -131,6 +149,9 @@ class CommandRecognizer:
             "language": getattr(info, "language", "en") or "en",
             "language_probability": round(float(getattr(info, "language_probability", 0.0)), 3),
             "segments": len(segment_diagnostics),
+            "avg_logprob": round(float(average_logprob), 3),
+            "no_speech_probability": round(float(no_speech_probability), 3),
+            "context_bias": context_bias,
             "transcript": transcript,
         }
         log.info("Speech diagnostics: %s", self.last_diagnostics)
