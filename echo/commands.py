@@ -23,6 +23,10 @@ _WAKE_PREFIX = re.compile(
     r"^(?:(?:hey|okay|ok)\s+)?(?:echo|ecco|aiko|ayko|eyko|ayco|eyco|(?:ay|ey)[ -]+ko)\b[,:;.!?\s]*",
     re.IGNORECASE,
 )
+_WAKE_SUFFIX = re.compile(
+    r"(?<=[.!?])\s+(?:(?:hey|okay|ok)\s+)?(?:echo|ecco|aiko|ayko|eyko|ayco|eyco|(?:ay|ey)[ -]+ko)\s*[.!?,;:]*$",
+    re.IGNORECASE,
+)
 _SPACE_RE = re.compile(r"\s+")
 _FILLER_PREFIX = re.compile(
     r"^(?:(?:please|can you|could you|would you|will you|i want you to)\s+)+",
@@ -32,7 +36,13 @@ _FILLER_PREFIX = re.compile(
 
 def clean_transcript(text: str) -> str:
     text = (text or "").strip().lower()
+    had_wake_prefix = bool(_WAKE_PREFIX.match(text))
     text = _WAKE_PREFIX.sub("", text)
+    # Whisper can include a second, sentence-final wake word from the
+    # microphone pre-roll. Remove it only when punctuation clearly separates
+    # it from the command, so a real track called "Echo" stays intact.
+    if had_wake_prefix:
+        text = _WAKE_SUFFIX.sub("", text)
     text = _FILLER_PREFIX.sub("", text)
     text = text.replace("’", "'")
     text = re.sub(r"[^\w\s:%+\-']", " ", text, flags=re.UNICODE)
