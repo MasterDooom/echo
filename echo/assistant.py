@@ -352,7 +352,12 @@ class EchoAssistant(threading.Thread):
                         # Only a verified wake phrase is allowed to interrupt
                         # Spotify. The active device is retained for restore.
                         playback_snapshot = spotify.pause_for_command()
-                        if playback_snapshot.get("was_playing"):
+                        if playback_snapshot.get("pause_error"):
+                            self.emit(
+                                "message",
+                                "Echo heard · Spotify pause was not confirmed; playback will be restored if needed.",
+                            )
+                        elif playback_snapshot.get("was_playing"):
                             self.emit("message", "Echo heard · listening")
                     except Exception as exc:
                         log.warning("Could not pause Spotify before command capture: %s", exc)
