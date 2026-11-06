@@ -78,7 +78,7 @@ Published benchmark results for that model are modest: 55.2% recall in clean spe
 Configure the downloaded file in `.env`:
 
 ~~~env
-ECHO_WAKE_MODEL_PATH=C:\\Users\\Lenovo\\AppData\\Local\\Echo\\models\\Echo_20260930_221231.onnx
+ECHO_WAKE_MODEL_PATH=%LOCALAPPDATA%\\Echo\\models\\Echo_20260930_221231.onnx
 ECHO_WAKE_THRESHOLD=0.50
 ~~~
 
