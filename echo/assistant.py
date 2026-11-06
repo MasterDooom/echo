@@ -12,7 +12,7 @@ from vosk import KaldiRecognizer, Model
 
 from .audio import Microphone
 from .commands import parse_command
-from .config import model_dir
+from .model import ensure_model
 from .spotify import SpotifyClient
 from .stt import CommandRecognizer
 from .wake import (
@@ -113,8 +113,12 @@ class EchoAssistant(threading.Thread):
         diagnostics = recognizer.last_diagnostics
         avg_logprob = float(diagnostics.get("avg_logprob", -10.0))
         no_speech = float(diagnostics.get("no_speech_probability", 1.0))
+        normalized = re.sub(r"[^a-z0-9]+", " ", transcript.lower()).strip()
+        bare_wake = normalized in {"echo", "hey echo"}
+        recognized_command = parse_command(transcript) is not None
         verified = (
             wake_word_detected(transcript)
+            and (bare_wake or recognized_command)
             and avg_logprob >= -1.0
             and no_speech <= 0.65
         )
@@ -157,12 +161,19 @@ class EchoAssistant(threading.Thread):
         try:
             self.emit("status", "loading")
 
-            wake_model_path = model_dir()
-            wake_model = Model(str(wake_model_path))
-            wake = KaldiRecognizer(wake_model, SAMPLE_RATE, WAKE_GRAMMAR)
-            wake.SetWords(False)
             wake_stabilizer = WakeWordStabilizer(WAKE_REQUIRED_HITS)
             open_wake = OpenWakeWordDetector()
+            wake: KaldiRecognizer | None = None
+            if not open_wake.enabled:
+                # Transitional local fallback: strict Vosk candidate detection
+                # is followed by independent Whisper verification. Once a
+                # custom Echo ONNX model is configured, Vosk is not loaded.
+                wake_model_path = ensure_model(
+                    lambda message: self.emit("message", message)
+                )
+                wake_model = Model(str(wake_model_path))
+                wake = KaldiRecognizer(wake_model, SAMPLE_RATE, WAKE_GRAMMAR)
+                wake.SetWords(False)
 
             spotify = SpotifyClient()
             spotify._access_token()
@@ -191,7 +202,9 @@ class EchoAssistant(threading.Thread):
                 if self.paused.is_set():
                     self._release_microphone()
                     history.clear()
-                    wake.Reset()
+                    if wake is not None:
+                        if wake is not None:
+                        wake.Reset()
                     wake_stabilizer.reset()
                     open_wake.reset()
                     self.emit("status", "privacy")
@@ -234,6 +247,7 @@ class EchoAssistant(threading.Thread):
                             frame_rms,
                         )
                 else:
+                    assert wake is not None
                     candidate = self._wake_candidate(wake, wake_audio) and speech_active
                     wake_score = 1.0 if candidate else 0.0
 
@@ -257,7 +271,8 @@ class EchoAssistant(threading.Thread):
                     command_recognizer, seed
                 )
                 history.clear()
-                wake.Reset()
+                if wake is not None:
+                    wake.Reset()
                 open_wake.reset()
 
                 if not verified:
